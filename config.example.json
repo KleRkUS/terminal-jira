@@ -1,0 +1,6 @@
+{
+  "url": "https://your-org.atlassian.net",
+  "email": "you@example.com",
+  "token": "YOUR_API_TOKEN",
+  "language": "en"
+}

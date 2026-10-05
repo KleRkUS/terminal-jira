@@ -1,0 +1,43 @@
+---
+description: Threading and redraw rules for the FTXUI event loop and Jira worker thread
+globs: src/**/*.cpp
+alwaysApply: false
+---
+
+# Never block or bypass the UI thread
+
+`JiraClient` owns one curl handle and is not thread-safe. Every call goes through
+`ui::async`, which runs on the single worker thread.
+
+```cpp
+// ❌ BAD: freezes the UI for the length of the request, and races the worker
+issues_ = ctx_.jira().search(jql);
+
+// ✅ GOOD
+ui::async(
+    ctx_, life, "Load issues in " + project_.key,
+    [this, jql] { return ctx_.jira().search(jql); },
+    [this](IssuePage page) { issues_ = std::move(page.issues); });
+```
+
+The third argument names the action for the user — "Move ENG-12 to Done", not
+"transition". It is the heading of the popup shown when the request fails, so
+phrase it from their point of view, not the API's.
+
+Pass `life` (the `Window` member) and let it convert to `weak_ptr`. Capturing the
+`shared_ptr` in a callback keeps the token alive after the window dies, so the
+expiry check stops working and the callback writes to freed memory.
+
+Need to reset state when a request fails? Use the five-argument form; `done` is
+skipped on error.
+
+```cpp
+ui::async(ctx_, life, action, work, done, [this] { loading_ = false; });
+```
+
+# Posted closures do not redraw
+
+FTXUI invalidates the frame for input events only. `App::post` therefore posts
+`Event::Custom` after each closure. Without it, async results update state that
+never reaches the screen and the view appears stuck on "loading…". Do not remove
+that line, and do not treat `Event::Custom` as a user keypress.

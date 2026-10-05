@@ -1,0 +1,42 @@
+---
+description: Jira REST conventions, parsing and credential handling
+globs: src/jira_client.cpp,src/jira_client.hpp,src/adf.cpp,src/adf.hpp,src/config.cpp,src/config.hpp
+alwaysApply: false
+---
+
+# Parse defensively
+
+Jira omits or nulls fields depending on permissions and project configuration.
+Use the helpers rather than `operator[]`, which throws on a missing key.
+
+```cpp
+// ❌ BAD: throws when the issue is unassigned
+i.assignee = f["assignee"]["displayName"];
+
+// ✅ GOOD
+i.assignee = nested(f, "assignee", "displayName");
+```
+
+Let failures throw. `request()` raises `JiraError` with the status and the raw
+response body, and `ui::async` turns that into a popup. Never return a sentinel
+value that the UI has to interpret, and never rewrite Jira's error text into
+something friendlier — the body it sent is more precise than a paraphrase.
+
+# Respect the API's own shapes
+
+- Rich text is ADF, never a string: use `adf::from_text` / `adf::to_text`.
+- Unassign with `{"accountId": null}`, not an empty string.
+- Board columns match on **status id**, not name — names are renameable.
+- `POST /search/jql` pages by `nextPageToken`; the Agile API pages by `startAt`.
+  Do not reintroduce the deprecated `/rest/api/3/search` endpoints.
+- Ask Jira for transitions and assignable users; never hard-code a workflow.
+
+# Credentials go through curl's auth options
+
+Use `CURLOPT_USERPWD` or `CURLAUTH_BEARER` with `CURLOPT_XOAUTH2_BEARER` — not a
+hand-built `Authorization` header. curl then withholds the credential on a
+cross-host redirect; a custom header would be replayed. Leave
+`CURLOPT_UNRESTRICTED_AUTH` off and TLS verification at its defaults.
+
+Never log, echo, or put a token in an error message, and keep it out of child
+process environments.

@@ -1,0 +1,42 @@
+---
+description: Conventions for full-screen windows and their keymaps
+globs: src/windows/**/*.cpp,src/windows/**/*.hpp
+alwaysApply: false
+---
+
+# One window owns the screen
+
+Subclass `ui::Window`, take `ui::Context&` and whatever you display by value, and
+load in `on_focus()` — never in the constructor, since results cannot be posted
+before the event loop starts. Register the new file in `CMakeLists.txt`.
+
+Windows talk to the app only through `ui::Context`. Never include `app.hpp`.
+
+# Return false for keys you do not own
+
+Unhandled keys fall through to the application, which is where `q` (back), space
+and Enter (confirm) and `?` (help) live. Returning `true` for everything breaks
+navigation.
+
+# Text input wins over universal keys
+
+```cpp
+// ✅ GOOD: a typed "q" or space reaches the query
+if (filter_.on_event(event)) { selected_ = 0; return true; }
+if (ui::motion(event, selected_, count)) return true;
+if (ui::is_select(event)) { open_selected(); return true; }
+```
+
+Checking `ui::is_back` or `ui::is_select` first makes it impossible to filter for
+`queue` or type a summary containing a space.
+
+# keys() is the keymap
+
+The footer hint line and the `?` overlay are generated from `keys()`. A binding
+missing from it is invisible to the user, so add the entry in the same change as
+the binding.
+
+# Refresh quietly after an edit
+
+Pass `announce = false` to a reload triggered by a mutation, so the status bar
+keeps showing what the edit did instead of a "loaded N issues" message.

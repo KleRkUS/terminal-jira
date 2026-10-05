@@ -1,0 +1,12 @@
+build/
+.cache/
+compile_commands.json
+
+# stray objects from a manual g++ build
+*.o
+
+# test artifacts
+*.raw
+auth.log
+writes.log
+__pycache__/

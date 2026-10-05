@@ -1,0 +1,61 @@
+---
+description: Every user-visible string comes from the catalog, never from a literal
+globs: src/**/*.cpp
+alwaysApply: false
+---
+
+# No user-visible literals outside src/strings/
+
+```cpp
+// ❌ BAD
+return ui::panel("Description", body, false);
+ctx_.set_status("Loading " + key + "…");
+
+// ✅ GOOD
+return ui::panel(tr("ticket.description"), body, false);
+ctx_.set_status(tr("ticket.message.loading", {{"key", key}}));
+```
+
+`using translations::tr;` goes next to `using namespace ftxui;` at the top of
+the file, so call sites stay short.
+
+A literal works perfectly and is invisible to translation, so this is the one
+rule here that nothing will catch for you.
+
+# Composing sentences
+
+Pass the whole sentence to the catalog with `{placeholders}`, and let the
+translation decide the word order. Never concatenate a translated fragment with
+punctuation or another fragment:
+
+```cpp
+// ❌ BAD — a translator cannot reorder this, and the comma may not belong
+tr("project.status.loaded") + ", " + std::to_string(count)
+
+// ✅ GOOD
+tr("project.status.tabLoaded", {{"project", key}, {"tab", tab}, {"count", n}})
+```
+
+Where English picks between two phrasings, give each one its own key
+(`tabLoaded` / `tabLoadedPartial`) rather than splicing a suffix in.
+
+# Keys
+
+Dotted path into the tree in `src/strings/en.cpp`:
+`<window or area>.<thing>[.<variant>]`. A node holds its own text under `"_"`
+and children beside it, so `ticket.assignee` is the label and
+`ticket.assignee.unassigned` the placeholder shown in it. Ordered lists are JSON
+arrays read with `translations::tr_list`.
+
+An unknown key renders as `!the.key!` and an unfilled placeholder stays as
+`{name}`, so both show up on screen and in the smoke recordings.
+
+# Not strings
+
+Leave these as literals, and do not add keys for them:
+
+- key chords (`"j / k"`, `"Enter / Space"`) — bindings, not prose. Their
+  descriptions are translated; the keys are not.
+- JQL, field names, API paths, and anything else Jira parses.
+- Jira's own data: status names, issue types, response bodies. `status_color`
+  matches on English status names from the API on purpose.
