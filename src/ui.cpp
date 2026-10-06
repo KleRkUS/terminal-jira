@@ -14,6 +14,7 @@
 #include <ftxui/dom/requirement.hpp>
 #include <ftxui/screen/box.hpp>
 
+#include "platform.hpp"
 #include "translations.hpp"
 
 using namespace ftxui;
@@ -228,14 +229,9 @@ Element avatar(const std::string& display_name) {
 }
 
 std::string relative_time(const std::string& jira_timestamp) {
-  // Jira sends e.g. 2026-10-05T15:30:00.000+0400.
-  if (jira_timestamp.size() < 19) return "";
-  std::tm tm{};
-  if (!strptime(jira_timestamp.c_str(), "%Y-%m-%dT%H:%M:%S", &tm)) return "";
-  tm.tm_isdst = -1;
-  const std::time_t then = std::mktime(&tm);
-  if (then == -1) return "";
-  double seconds = std::difftime(std::time(nullptr), then);
+  const auto when = platform::parse_timestamp(jira_timestamp);
+  if (!when) return "";
+  double seconds = std::difftime(std::time(nullptr), *when);
   if (seconds < 0) seconds = 0;
 
   const long minutes = static_cast<long>(seconds) / 60;

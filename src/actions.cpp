@@ -395,8 +395,16 @@ void copy_detail(ui::Context& ctx, const Issue& issue) {
     if (ctx.copy_to_clipboard(part.value))
       ctx.set_status(tr("ticket.copy.done", {{"field", part.label}}));
     else
-      ctx.set_status(tr("ticket.copy.failed"), true);
+      ctx.set_status(tr(std::string("ticket.copy.failed.") + TERMINAL_JIRA_PLATFORM), true);
   });
+}
+
+void copy_detail(ui::Context& ctx, const Life& life, const std::string& issue_key) {
+  ctx.set_status(tr("ticket.copy.loading", {{"key", issue_key}}));
+  ui::async(
+      ctx, life, tr("ticket.copy.load", {{"key", issue_key}}),
+      [&ctx, issue_key] { return ctx.jira().issue_detail(issue_key); },
+      [&ctx](Issue issue) { copy_detail(ctx, issue); });
 }
 
 void open_in_browser(ui::Context& ctx, const Issue& issue) {

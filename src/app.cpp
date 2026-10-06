@@ -4,115 +4,28 @@
 #include "app.hpp"
 
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
 #include <sstream>
 #include <utility>
-
-#include <unistd.h>  // getpid, for the temp file name used by $EDITOR
 
 #include <ftxui/component/component_options.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/string.hpp>
 #include <ftxui/screen/terminal.hpp>
 
+#include "platform.hpp"
 #include "translations.hpp"
 #include "windows/projects_window.hpp"
 
 using namespace ftxui;
 using translations::tr;
-namespace fs = std::filesystem;
 
 namespace {
-
-std::string shell_quote(const std::string& value) {
-  std::string out = "'";
-  for (char c : value) {
-    if (c == '\'')
-      out += "'\\''";
-    else
-      out += c;
-  }
-  return out + "'";
-}
 
 // Popups live for four seconds and fade over the last part of it.
 constexpr auto kToastLifetime = std::chrono::milliseconds(4000);
 constexpr size_t kMaxToasts = 5;
 constexpr int kToastWidth = 54;
 constexpr size_t kToastDetailLimit = 220;
-
-std::string read_file(const fs::path& path) {
-  std::ifstream in(path);
-  std::ostringstream out;
-  out << in.rdbuf();
-  return out.str();
-}
-
-// Child processes inherit our environment, and an editor or a browser has no
-// business seeing the Jira token. Hide the credential variables for as long as
-// one is running, then put them back.
-class ScrubbedEnvironment {
- public:
-  ScrubbedEnvironment() {
-    for (const char* name : {"JIRA_TOKEN", "JIRA_EMAIL"}) {
-      if (const char* value = std::getenv(name); value && *value) {
-        saved_.emplace_back(name, value);
-        ::unsetenv(name);
-      }
-    }
-  }
-  ~ScrubbedEnvironment() {
-    for (const auto& [name, value] : saved_) ::setenv(name.c_str(), value.c_str(), 1);
-  }
-  ScrubbedEnvironment(const ScrubbedEnvironment&) = delete;
-  ScrubbedEnvironment& operator=(const ScrubbedEnvironment&) = delete;
-
- private:
-  std::vector<std::pair<std::string, std::string>> saved_;
-};
-
-std::string base64(const std::string& input) {
-  static constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  std::string out;
-  for (size_t i = 0; i < input.size(); i += 3) {
-    const size_t left = input.size() - i;
-    const unsigned char a = static_cast<unsigned char>(input[i]);
-    const unsigned char b = left > 1 ? static_cast<unsigned char>(input[i + 1]) : 0;
-    const unsigned char c = left > 2 ? static_cast<unsigned char>(input[i + 2]) : 0;
-    const unsigned int triple = (a << 16) | (b << 8) | c;
-    out += kAlphabet[(triple >> 18) & 0x3f];
-    out += kAlphabet[(triple >> 12) & 0x3f];
-    out += left > 1 ? kAlphabet[(triple >> 6) & 0x3f] : '=';
-    out += left > 2 ? kAlphabet[triple & 0x3f] : '=';
-  }
-  return out;
-}
-
-// Feeds `text` to a clipboard helper on its standard input. False if the helper
-// is not installed (the shell exits 127) or refused the text.
-bool pipe_to(const std::string& command, const std::string& text) {
-  ScrubbedEnvironment scrubbed;
-  // Anything the helper prints would land in the middle of the drawn frame.
-  FILE* pipe = popen((command + " >/dev/null 2>&1").c_str(), "w");
-  if (!pipe) return false;
-  const bool written = std::fwrite(text.data(), 1, text.size(), pipe) == text.size();
-  return pclose(pipe) == 0 && written;
-}
-
-// Asks the terminal itself to hold the text. This is the only mechanism that
-// works on the far side of an ssh connection, and the only one with no way of
-// telling whether the terminal honoured it.
-bool hand_to_terminal(const std::string& text) {
-  FILE* tty = std::fopen("/dev/tty", "w");
-  if (!tty) return false;
-  const std::string sequence = "\x1b]52;c;" + base64(text) + "\a";
-  const bool ok = std::fwrite(sequence.data(), 1, sequence.size(), tty) == sequence.size();
-  std::fclose(tty);
-  return ok;
-}
 
 }  // namespace
 
@@ -323,58 +236,32 @@ std::vector<int> App::picker_matches() const {
 bool App::edit_externally(const std::string& initial, std::string& out) {
   if (!screen_) return false;
 
-  const char* editor = std::getenv("VISUAL");
-  if (!editor || !*editor) editor = std::getenv("EDITOR");
-  if (!editor || !*editor) editor = "vi";
+  // The editor has to own the screen, so the terminal is restored for the call
+  // and the platform module only has to run the program.
+  platform::EditedText edited;
+  screen_->WithRestoredIO([&] { edited = platform::edit_text(initial); })();
 
-  const fs::path path = fs::temp_directory_path() / ("terminal-jira-" + std::to_string(::getpid()) + ".md");
-  {
-    std::ofstream file(path);
-    if (!file) return set_status(tr("app.editor.cannotWrite", {{"path", path.string()}}), true), false;
-    file << initial;
+  switch (edited.status) {
+    case platform::EditStatus::CannotWrite:
+      return set_status(tr("app.editor.cannotWrite", {{"path", edited.path}}), true), false;
+    case platform::EditStatus::Failed:
+      return set_status(tr("app.editor.failed", {{"code", std::to_string(edited.code)}}), true), false;
+    case platform::EditStatus::Unchanged:
+      return set_status(tr("app.editor.unchanged")), false;
+    case platform::EditStatus::Ok:
+      out = std::move(edited.text);
+      return true;
   }
-
-  int code = -1;
-  const std::string editor_name = editor;
-  screen_->WithRestoredIO([&] {
-    ScrubbedEnvironment scrubbed;
-    code = std::system((editor_name + " " + shell_quote(path.string())).c_str());
-  })();
-
-  bool ok = false;
-  if (code != 0) {
-    set_status(tr("app.editor.failed", {{"code", std::to_string(code)}}), true);
-  } else {
-    out = read_file(path);
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
-    if (out == initial)
-      set_status(tr("app.editor.unchanged"));
-    else
-      ok = true;
-  }
-  std::error_code ignored;
-  fs::remove(path, ignored);
-  return ok;
+  return false;
 }
 
-bool App::copy_to_clipboard(const std::string& text) {
-  if (text.empty()) return false;
-  // There is no single clipboard: Wayland, X11, macOS and Windows under WSL each
-  // have their own helper, and none of them is there over ssh. Try each, then
-  // fall back to asking the terminal.
-  for (const char* command : {"wl-copy", "xclip -selection clipboard", "xsel --clipboard --input", "pbcopy",
-                              "clip.exe"})
-    if (pipe_to(command, text)) return true;
-  return hand_to_terminal(text);
-}
+bool App::copy_to_clipboard(const std::string& text) { return platform::copy_to_clipboard(text); }
 
 void App::open_in_browser(const std::string& url) {
-  const std::string command = "xdg-open " + shell_quote(url) + " >/dev/null 2>&1 &";
-  ScrubbedEnvironment scrubbed;
-  if (std::system(command.c_str()) != 0)
-    set_status(tr("app.browser.failed", {{"url", url}}), true);
-  else
+  if (platform::open_in_browser(url))
     set_status(tr("app.browser.opened", {{"url", url}}));
+  else
+    set_status(tr("app.browser.failed", {{"url", url}}), true);
 }
 
 // ---------------------------------------------------------------- rendering

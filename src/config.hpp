@@ -18,8 +18,8 @@ struct Config {
   std::string notice;
 };
 
-// ~/.config/terminal-jira, or $XDG_CONFIG_HOME/terminal-jira. Also where add-on language
-// catalogs live, under locales/.
+// Where config.json and add-on language catalogs (locales/) live. Which directory
+// that is depends on the operating system; see platform.hpp.
 std::filesystem::path config_dir();
 
 // Loads config.json from there, then applies JIRA_URL / JIRA_EMAIL /

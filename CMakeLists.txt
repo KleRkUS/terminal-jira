@@ -12,6 +12,29 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Chosen by the user or by CI. The machine CMake happens to be running on is not
+# consulted: a Linux runner can still be asked for another platform.
+set(TERMINAL_JIRA_PLATFORM "linux" CACHE STRING
+    "Platform module to compile: linux (default), mac or windows")
+set_property(CACHE TERMINAL_JIRA_PLATFORM PROPERTY STRINGS linux mac windows)
+
+set(_terminal_jira_platforms linux mac windows)
+if(NOT TERMINAL_JIRA_PLATFORM IN_LIST _terminal_jira_platforms)
+  message(FATAL_ERROR
+    "TERMINAL_JIRA_PLATFORM must be one of: linux, mac, windows "
+    "(got '${TERMINAL_JIRA_PLATFORM}').")
+endif()
+
+set(TERMINAL_JIRA_PLATFORM_SOURCE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/${TERMINAL_JIRA_PLATFORM}.cpp")
+if(NOT EXISTS "${TERMINAL_JIRA_PLATFORM_SOURCE}")
+  message(FATAL_ERROR
+    "TERMINAL_JIRA_PLATFORM=${TERMINAL_JIRA_PLATFORM} requires "
+    "src/platform/${TERMINAL_JIRA_PLATFORM}.cpp, and that file does not exist yet.")
+endif()
+
+message(STATUS "terminal-jira platform: ${TERMINAL_JIRA_PLATFORM}")
+
 include(FetchContent)
 
 FetchContent_Declare(ftxui
@@ -26,6 +49,13 @@ FetchContent_MakeAvailable(ftxui json)
 
 find_package(CURL REQUIRED)
 
+# The chosen platform module, plus the name of that choice, on every target that
+# compiles it. Further per-platform target settings belong here too.
+function(terminal_jira_platform target)
+  target_sources(${target} PRIVATE "${TERMINAL_JIRA_PLATFORM_SOURCE}")
+  target_compile_definitions(${target} PRIVATE "TERMINAL_JIRA_PLATFORM=\"${TERMINAL_JIRA_PLATFORM}\"")
+endfunction()
+
 add_executable(terminal-jira
   src/main.cpp
   src/app.cpp
@@ -39,6 +69,7 @@ add_executable(terminal-jira
   src/windows/projects_window.cpp
   src/windows/project_window.cpp
   src/windows/ticket_window.cpp)
+terminal_jira_platform(terminal-jira)
 
 target_include_directories(terminal-jira PRIVATE src)
 target_compile_options(terminal-jira PRIVATE -Wall -Wextra)
@@ -57,7 +88,9 @@ if(TERMINAL_JIRA_TESTS)
   target_link_libraries(adf_test PRIVATE nlohmann_json::nlohmann_json)
   add_test(NAME adf COMMAND adf_test)
 
-  add_executable(translations_test tests/translations_test.cpp src/translations.cpp src/strings/en.cpp src/config.cpp)
+  add_executable(translations_test tests/translations_test.cpp src/translations.cpp src/strings/en.cpp
+                 src/config.cpp)
+  terminal_jira_platform(translations_test)
   target_include_directories(translations_test PRIVATE src)
   target_compile_options(translations_test PRIVATE -Wall -Wextra)
   target_link_libraries(translations_test PRIVATE nlohmann_json::nlohmann_json)

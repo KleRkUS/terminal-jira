@@ -193,6 +193,18 @@ check "the copy dialog names the ticket"   "Copy from ENG-1"          "$work/cop
 check "it offers the identifier"           "Identifier   ENG-1"       "$work/copy.txt"
 check "choosing one says what was copied"  "copied to the clipboard"  "$work/copy.txt"
 
+# The list and the board do not carry the description, so y has to load the issue
+# before it can offer the same three lines.
+echo "copying from a list or a board: y loads the highlighted ticket"
+"$here/drive.sh" "$binary" "$work/copy-list.raw" 2:'\r' 2:y 2:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/copy-list.raw" 1 > "$work/copy-list.txt"
+check "the list offers the highlighted ticket" "Copy from ENG-1"       "$work/copy-list.txt"
+check "and its description was loaded"         "Details for issue 1."  "$work/copy-list.txt"
+
+"$here/drive.sh" "$binary" "$work/copy-board.raw" 2:'\r' 2.5:4 2.5:y 2:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/copy-board.raw" 1 > "$work/copy-board.txt"
+check "the board offers the highlighted card"  "Copy from ENG-3"       "$work/copy-board.txt"
+
 echo "cancelling: q closes a dialog without sending anything"
 : > "$work/writes.log"
 "$here/drive.sh" "$binary" "$work/cancel.raw" 2:'\r' 2:a 2:q 2:'\x03' > /dev/null

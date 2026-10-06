@@ -23,10 +23,18 @@ sudo apt install build-essential cmake libcurl4-openssl-dev python3
 
 # Fedora
 sudo dnf install gcc-c++ cmake libcurl-devel python3
-
-# macOS
-brew install cmake curl python3
 ```
+
+The platform module is chosen at configure time, not detected from the machine:
+
+```bash
+cmake -S . -B build -DTERMINAL_JIRA_PLATFORM=linux   # the default, so it can be omitted
+```
+
+`mac` and `windows` are the other accepted values, for a user or a CI job that is
+building for them. Each value compiles `src/platform/<value>.cpp` and defines
+`TERMINAL_JIRA_PLATFORM` to that name on the target. `linux.cpp` and `mac.cpp`
+exist; `windows` stops at configuration and names the missing file.
 
 On Ubuntu the curl headers land in `/usr/include/x86_64-linux-gnu/curl/`, which is
 already on the default include path — if `pkg-config --modversion libcurl` fails
@@ -53,7 +61,8 @@ The build is warning-clean under `-Wall -Wextra`; please keep it that way.
 `compile_commands.json` is generated in `build/` for clangd — symlink it to the
 project root if your editor expects it there.
 
-`-DTERMINAL_JIRA_TESTS=OFF` skips building the tests.
+`-DTERMINAL_JIRA_TESTS=OFF` skips building the tests. `-DTERMINAL_JIRA_PLATFORM`
+selects the platform module; see above. The default is `linux`.
 
 ## Test
 
@@ -71,7 +80,7 @@ Three tests:
 - **`smoke`** — starts a stub Jira server, drives the real binary through all
   three windows under a pseudo-terminal, and asserts on both the frames it drew
   and the requests it sent, including the error popups raised by rejected
-  requests. Forty checks. Registered only if `python3` and `script` are
+  requests. Forty-three checks. Registered only if `python3` and `script` are
   available.
 
 Run the end-to-end test directly for readable output:

@@ -582,6 +582,7 @@ bool ProjectWindow::on_event(const Event& event) {
   if (event == Event::Character('a')) return actions::reassign(ctx_, life, *issue, refresh), true;
   if (event == Event::Character('s')) return actions::change_status(ctx_, life, *issue, refresh), true;
   if (event == Event::Character('o')) return actions::open_in_browser(ctx_, *issue), true;
+  if (event == Event::Character('y')) return actions::copy_detail(ctx_, life, issue->key), true;
   return false;
 }
 
@@ -608,6 +609,7 @@ std::vector<ui::KeyHelp> ProjectWindow::keys() const {
                             {"a", tr("project.keys.reassign")},
                             {"s", tr("project.keys.status")},
                             {"o", tr("project.keys.browser")},
+                            {"y", tr("project.keys.copy")},
                             {"/", tr("project.keys.filter")},
                             {"r", tr("project.keys.reload")},
                             {"Esc / q", tr("project.keys.back")},

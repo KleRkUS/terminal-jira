@@ -43,4 +43,8 @@ void open_in_browser(ui::Context& ctx, const Issue& issue);
 // come back; before that it is empty, and says so.
 void copy_detail(ui::Context& ctx, const Issue& issue);
 
+// The list and the board only carry the fields they display, so this loads the
+// issue first and then offers the same choice.
+void copy_detail(ui::Context& ctx, const Life& life, const std::string& issue_key);
+
 }  // namespace actions

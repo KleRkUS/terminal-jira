@@ -208,6 +208,7 @@ const char kStringsEn[] = R"json(
       "reassign": "reassign",
       "status": "change status",
       "browser": "open in browser",
+      "copy": "copy a field",
       "filter": "filter",
       "reload": "reload",
       "back": "back to projects"
@@ -242,9 +243,14 @@ const char kStringsEn[] = R"json(
       "identifier": "Identifier",
       "name": "Name",
       "description": "Description",
+      "loading": "Loading {key} to copy…",
+      "load": "Load {key} to copy",
       "empty": "The {field} is empty — nothing to copy.",
       "done": "{field} copied to the clipboard.",
-      "failed": "No clipboard would take it. Install wl-clipboard, xclip or xsel."
+      "failed": {
+        "linux": "No clipboard would take it. Install wl-clipboard, xclip or xsel.",
+        "mac": "No clipboard would take it."
+      }
     },
 
     "keys": {

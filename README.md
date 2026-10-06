@@ -170,6 +170,7 @@ From any tab you can work on the highlighted issue without opening it:
 | `a` | reassign, or unassign |
 | `s` | move it to another status |
 | `o` | open it in your browser |
+| `y` | copy its identifier, name or description |
 | `r` | reload |
 
 Only the statuses your workflow actually allows are offered, and only people who
@@ -212,9 +213,11 @@ Both open `$VISUAL`, `$EDITOR`, or `vi`, and save when you exit the editor. Leav
 the text unchanged and nothing is sent.
 
 `y` copies something out of the ticket: it lists the identifier, the name and the
-description, and the one you choose goes to your clipboard. On a desktop that
-needs `wl-copy`, `xclip` or `xsel` installed (`pbcopy` on macOS); over ssh the app
-asks the terminal itself to hold the text, which most terminals support.
+description, and the one you choose goes to your clipboard. The same key works on
+the highlighted row of a list and on the highlighted card of a board; those views
+do not carry the description, so it is loaded before the list appears. On Linux
+this needs `wl-copy`, `xclip` or `xsel`; the macOS build uses `pbcopy`. Over ssh
+either build asks the terminal itself to hold the text, which most terminals support.
 
 Jira decides what you may change. If your account cannot set the reporter, the
 popup still offers it and Jira's refusal shows up in the corner — the app never

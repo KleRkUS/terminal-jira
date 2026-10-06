@@ -19,6 +19,9 @@ Start here, then follow the links when you need depth:
 src/
   main.cpp            loads config, constructs the client and app
   config.{hpp,cpp}    config file + env vars, credential hygiene
+  platform.hpp        what the program may ask the operating system for
+  platform/linux.cpp  Linux implementation of platform.hpp (the default build)
+  platform/mac.cpp    macOS implementation; built with -DTERMINAL_JIRA_PLATFORM=mac
   translations.*      tr(): dotted-key lookup into the string catalog
   strings/            the catalogs themselves, one file per language
   jira_client.*       every HTTP call; the only file that knows about curl

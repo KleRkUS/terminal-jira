@@ -129,17 +129,26 @@ because it answers several questions rather than one.
 
 ## Talking to the system
 
-`$EDITOR`, the browser and the clipboard are all reached through `ui::Context`, so
-no window runs a subprocess itself. Child processes see a scrubbed environment:
-`JIRA_TOKEN` and `JIRA_EMAIL` are unset for as long as one is running, because an
-editor or a clipboard helper has no business reading the credentials.
+`$EDITOR`, the browser, the clipboard, the config directory and timestamp parsing
+go through `platform.hpp`. The windows call `ui::Context`, and `ui::Context` calls
+`platform`; no window runs a subprocess itself. Which file is compiled is a build
+attribute, `-DTERMINAL_JIRA_PLATFORM`, defaulting to `linux`. The host machine is
+not detected. `mac` selects `platform/mac.cpp`. `windows` selects
+`platform/windows.cpp`, which is not written yet, so that choice fails
+configuration until it is. The same attribute is compiled into the target as
+the `TERMINAL_JIRA_PLATFORM` macro.
 
-The clipboard is not one thing. `copy_to_clipboard` tries `wl-copy`, `xclip`,
-`xsel`, `pbcopy` and `clip.exe` in turn — a missing helper makes the shell exit
-127, which reads as "try the next" — and then falls back to OSC 52, which asks the
-terminal to hold the text and is the only mechanism that can work over ssh. It is
-also the one with no reply, so a terminal that ignores the escape leaves the app
-reporting a success it cannot verify.
+Child processes see a scrubbed environment: `JIRA_TOKEN` and `JIRA_EMAIL` are
+unset for as long as one is running, because an editor or a clipboard helper has
+no business reading the credentials.
+
+On Linux the clipboard tries `wl-copy`, then `xclip`, then `xsel`. A missing
+helper makes the shell exit 127, which reads as "try the next", and the last
+resort is OSC 52, which asks the terminal to hold the text and is what works over
+ssh. It has no reply, so a terminal that ignores the escape leaves the app
+reporting a success it cannot verify. The macOS module uses `pbcopy` and then the
+same escape, opens urls with `open`, and keeps the config under
+`~/Library/Application Support/terminal-jira`.
 
 ## Status bar and notices
 

@@ -101,10 +101,10 @@ That is deliberate: curl then treats the value as a credential and, with
 `CURLOPT_UNRESTRICTED_AUTH` off, will not replay it to a different host if a
 request is redirected. A custom header would be replayed.
 
-Related hygiene, in `config.cpp` and `app.cpp`: plain `http://` is refused unless
-`TERMINAL_JIRA_ALLOW_HTTP=1`, a world-readable config file is chmodded to `600` with a
-notice, and `JIRA_TOKEN`/`JIRA_EMAIL` are removed from the environment of
-`$EDITOR` and `xdg-open` children.
+Related hygiene: plain `http://` is refused unless `TERMINAL_JIRA_ALLOW_HTTP=1`.
+A world-readable config file is tightened by the platform module (on Linux, to
+mode `600`) with a notice, and `JIRA_TOKEN`/`JIRA_EMAIL` are removed from the
+environment of `$EDITOR` and browser children.
 
 ## Adding a call
 

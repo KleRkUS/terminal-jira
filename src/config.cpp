@@ -9,15 +9,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include "platform.hpp"
 #include "translations.hpp"
 
 namespace fs = std::filesystem;
 
-fs::path config_dir() {
-  if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg) return fs::path(xdg) / "terminal-jira";
-  const char* home = std::getenv("HOME");
-  return fs::path(home ? home : ".") / ".config" / "terminal-jira";
-}
+fs::path config_dir() { return platform::config_dir(); }
 
 static fs::path config_path() { return config_dir() / "config.json"; }
 
@@ -38,17 +35,18 @@ static void add_notice(std::string& notice, const std::string& message) {
 }
 
 // The config file holds a long-lived API token, so it should not be readable by
-// anyone else. Tighten it rather than refusing to start, and say so.
+// anyone else. The platform tightens it rather than refusing to start; this
+// turns the outcome into the notice the user sees.
 static std::string restrict_permissions(const fs::path& path) {
-  std::error_code ec;
-  const auto perms = fs::status(path, ec).permissions();
-  if (ec) return "";
-  const auto exposed = perms & (fs::perms::group_all | fs::perms::others_all);
-  if (exposed == fs::perms::none) return "";
-
-  fs::permissions(path, fs::perms::owner_read | fs::perms::owner_write, ec);
-  if (ec) return translations::tr("config.notTightened", {{"path", path.string()}});
-  return translations::tr("config.tightened", {{"path", path.string()}});
+  switch (platform::protect_file(path)) {
+    case platform::FileProtection::Tightened:
+      return translations::tr("config.tightened", {{"path", path.string()}});
+    case platform::FileProtection::Failed:
+      return translations::tr("config.notTightened", {{"path", path.string()}});
+    case platform::FileProtection::AlreadyPrivate:
+      break;
+  }
+  return "";
 }
 
 Config load_config() {
