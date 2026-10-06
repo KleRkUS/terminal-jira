@@ -158,7 +158,8 @@ one card per issue with its key, summary, type, priority, assignee initials and
 age; the columns always share the width equally, however long the summaries in
 them are. `h` and `l` move between columns, `b` switches to another board, and `c`
 opens a checklist of the columns — `Space` ticks one off, `Enter` applies, and the
-heading then says how many are hidden.
+heading then says how many are hidden. `f` filters the cards to one assignee: the
+list is the people actually on the board, plus *Unassigned* and *Everyone*.
 
 From any tab you can work on the highlighted issue without opening it:
 
@@ -255,6 +256,12 @@ revoked since the list was loaded. Press `r`.
 
 **"This project has no boards"** — the project has no agile board, or your account
 cannot see it. The other three tabs still work.
+
+**The board has columns but no cards** — the board itself returned no issues; it
+says so above the columns. Its filter may exclude everything, or the issues may be
+in a sprint that has not started. `r` reloads and `b` picks another board. To see
+what Jira actually answered, run with `TERMINAL_JIRA_LOG=/tmp/jira.log` and read
+that file: each line ends with how many items came back.
 
 **A board column says "(not on the board)"** — those issues are in a status no
 column on your board claims, so they are shown in a column of their own rather

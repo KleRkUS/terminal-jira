@@ -131,7 +131,10 @@ class Handler(BaseHTTPRequestHandler):
             columns = [{"name": name, "statuses": [{"id": shift + sid}]} for sid, name in STATUSES]
             return self.reply({"columnConfig": {"columns": columns}})
         if re.search(r"/board/\d+/issue", path):
-            issues = [issue(n) for n in range(1, 13)]
+            # no-issues: a board whose filter matches nothing, which is the state
+            # that used to be indistinguishable from a board that failed to load.
+            count = 0 if BOARD == "no-issues" else 12
+            issues = [issue(n) for n in range(1, count + 1)]
             return self.reply({"issues": issues, "total": len(issues), "startAt": 0})
         if "/transitions" in path:
             return self.reply({"transitions": [
@@ -191,10 +194,10 @@ def main():
                         help="comma separated: reads, writes — reject those requests, "
                              "to exercise the error popups")
     parser.add_argument("--board", default="normal",
-                        choices=["normal", "renamed-ids", "extra-status"],
+                        choices=["normal", "renamed-ids", "extra-status", "no-issues"],
                         help="how the board columns relate to the issue statuses: "
-                             "matching ids, ids that match nothing, or issues in a "
-                             "status the columns leave out")
+                             "matching ids, ids that match nothing, issues in a "
+                             "status the columns leave out, or no issues at all")
     args = parser.parse_args()
     LOG_DIR = args.log_dir
     FAIL = {part for part in args.fail.split(",") if part}

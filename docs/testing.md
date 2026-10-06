@@ -30,7 +30,7 @@ tests/smoke.sh build/terminal-jira
 
 It starts the stub on port 8723, drives the binary through all three windows, and
 checks both halves of the contract: what was drawn, and what was sent.
-Thirty-three checks covering navigation, the board view, board column widths and
+Forty checks covering navigation, the board view, board column widths and
 mapping, hiding columns, mutations, copying to the clipboard, the ticket field editors, dialog cancellation, the auth scheme, and the
 error popups. Output
 is one line per check, and the exit status is the number of failures.
@@ -84,12 +84,33 @@ the statuses the issues are actually in:
 ```bash
 python3 tests/fake_jira.py --board renamed-ids    # column status ids match nothing
 python3 tests/fake_jira.py --board extra-status   # half the issues sit off the board
+python3 tests/fake_jira.py --board no-issues      # columns, but nothing on them
 ```
 
 `renamed-ids` leaves every card to be matched by status name, as happens on an
 instance whose statuses were renamed and recreated. `extra-status` puts some
 issues in a status no column claims, so they should appear in a column labelled
-"(not on the board)" rather than vanishing.
+"(not on the board)" rather than vanishing. `no-issues` is the state that used to
+be indistinguishable from a board that failed to load; it should say in words that
+the board came back empty.
+
+## Seeing the requests
+
+`TERMINAL_JIRA_LOG` names a file to append one line per request to: the method,
+the path, the status, the size, and how many items the paging fields reported. It
+is the first thing to reach for when the app and Jira disagree about what exists.
+
+```bash
+TERMINAL_JIRA_LOG=/tmp/jira.log build/terminal-jira
+```
+
+```
+GET /rest/agile/1.0/board/10/configuration -> 200 (174 bytes)
+GET /rest/agile/1.0/board/10/issue?startAt=0&maxResults=200&fields=… -> 200 (5985 bytes) issues=12 total=12
+```
+
+Credentials are never written to it; neither are response bodies, except the
+first 200 characters of one that failed.
 
 ## Making requests fail
 

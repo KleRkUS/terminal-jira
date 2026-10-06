@@ -142,7 +142,29 @@ python3 "$here/replay.py" "$work/offboard.raw" 1 > "$work/offboard.txt"
 check "a status off the board gets its own column" "Backlog (not on the board)" "$work/offboard.txt"
 check "and the cards in it are shown"              "ENG-2"                      "$work/offboard.txt"
 
+start_stub --board no-issues
+TERMINAL_JIRA_LOG="$work/requests.log" \
+  "$here/drive.sh" "$binary" "$work/noissues.raw" 2:'\r' 2.5:4 3:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/noissues.raw" 1 > "$work/noissues.txt"
+check "an empty board says so"        "this board returned no issues" "$work/noissues.txt"
+check "and still names the column key" "c columns"                     "$work/noissues.txt"
+# The log is how a board that looks wrong gets diagnosed, so it has to say how
+# much came back, not just that something did.
+check "the request log counts what arrived" "issues=0 total=0" "$work/requests.log"
+
 start_stub
+
+# The stub assigns most cards to Ada Lovelace and leaves every fourth unassigned,
+# so picking the empty assignee must leave exactly those three.
+echo "board assignee: f keeps one person's cards"
+"$here/drive.sh" "$binary" "$work/assignee.raw" \
+  2:'\r' 2.5:4 2:f 1:j 1:' ' 2:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/assignee.raw" 99 > "$work/assignee.txt"
+python3 "$here/replay.py" "$work/assignee.raw" 1 > "$work/assignee-last.txt"
+check "the heading names the key"            "f assignee"        "$work/assignee.txt"
+check "the picker lists who is on the board" "Ada Lovelace  (9)" "$work/assignee.txt"
+check "choosing someone names them"          "f · Unassigned"    "$work/assignee-last.txt"
+check "and only their cards remain"          "showing 3 of 12"   "$work/assignee-last.txt"
 
 echo "ticket fields: j/k picks a field, space edits it"
 "$here/drive.sh" "$binary" "$work/fields.raw" 2:'\r' 2:'\r' 1.5:jj 2:'\x03' > /dev/null

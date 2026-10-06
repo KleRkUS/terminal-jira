@@ -15,6 +15,8 @@
 
 #include <ftxui/component/component_options.hpp>
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/string.hpp>
+#include <ftxui/screen/terminal.hpp>
 
 #include "translations.hpp"
 #include "windows/projects_window.hpp"
@@ -447,12 +449,16 @@ Element App::render_chrome(Element body) {
     footer.push_back(status_error_ ? (line | color(Color::Red)) : (line | color(Color::Cyan)));
   }
 
-  // One compact hint line, drawn from the active window's own keymap.
+  // One compact hint line, drawn from the active window's own keymap. It is cut
+  // to the real width rather than a fixed guess, because a key that falls off the
+  // end is a key nobody finds — `?` is the only other place it is written down.
+  const int room = Terminal::Size().dimx - static_cast<int>(tr("app.keysHint").size()) - 4;
   std::string hints;
   if (top())
     for (const auto& [key, description] : top()->keys()) {
-      if (hints.size() > 110) break;
-      hints += (hints.empty() ? " " : "   ") + key + " " + description;
+      const std::string entry = (hints.empty() ? " " : "   ") + key + " " + description;
+      if (static_cast<int>(string_width(hints + entry)) > room) break;
+      hints += entry;
     }
   footer.push_back(hbox({text(hints) | dim | flex, text(tr("app.keysHint") + " ") | dim}));
 

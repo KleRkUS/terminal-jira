@@ -147,12 +147,26 @@ const char kStringsEn[] = R"json(
       "showing": "showing {shown} of {total}",
       "offBoard": "{status} (not on the board)",
       "noStatus": "(no status)",
+      "noIssues": "this board returned no issues — r reloads, b picks another board",
       "pick": { "_": "Boards in {key}", "option": "{name}  ({type})" },
+      "assignee": {
+        "_": "Assignee on {name}",
+        "everyone": "Everyone",
+        "unassigned": "Unassigned",
+        "option": "{name}  ({count})",
+        "hint": "f assignee",
+        "active": "f · {name}",
+        "none": "No cards are loaded, so there is nobody to filter by.",
+        "set": "{board}: showing {name}.",
+        "cleared": "{board}: showing everyone."
+      },
       "columns": {
         "_": "Columns on {name}",
         "option": "{name}  ({count})",
-        "hidden": "{count} hidden",
+        "hint": "c columns",
+        "hidden": "c columns · {count} hidden",
         "allHidden": "At least one column has to stay visible.",
+        "none": "This board has no columns to choose from yet.",
         "shown": "Showing every column.",
         "hiding": "Hiding {count} of {total} columns."
       }
@@ -173,16 +187,18 @@ const char kStringsEn[] = R"json(
     "action": {
       "loadTab": "Load {tab} issues in {project}",
       "loadBoards": "Load boards in {project}",
-      "loadBoard": "Load board {name}"
+      "loadBoard": "Load board {name}",
+      "loadBoardColumns": "Load the columns of board {name}"
     },
 
     "keys": {
       "tabs": "previous / next tab",
-      "jumpTab": "jump to Mine / Open / All / Board",
+      "jumpTab": "jump to a tab",
       "columns": "previous / next column",
       "cards": "move between cards",
       "switchBoard": "switch board",
       "pickColumns": "show / hide columns",
+      "pickAssignee": "filter by assignee",
       "move": "move down / up",
       "jump": "jump / half page",
       "more": "load more issues",

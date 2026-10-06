@@ -3,6 +3,8 @@
 
 #include "jira_client.hpp"
 
+#include <cstdlib>
+#include <fstream>
 #include <stdexcept>
 
 #include <curl/curl.h>
@@ -17,6 +19,34 @@ namespace {
 size_t write_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
   static_cast<std::string*>(userdata)->append(ptr, size * nmemb);
   return size * nmemb;
+}
+
+// A request log, for when the app and Jira disagree about what is there. Off
+// unless TERMINAL_JIRA_LOG names a file. Only the worker thread makes requests,
+// so no lock is needed. Credentials are never written: the line is the path, the
+// status, and how much came back.
+void log_request(const std::string& method, const std::string& path, long status, const std::string& body) {
+  static const char* target = std::getenv("TERMINAL_JIRA_LOG");
+  if (!target || !*target) return;
+
+  std::ofstream out(target, std::ios::app);
+  if (!out) return;
+  out << method << " " << path << " -> " << status << " (" << body.size() << " bytes)";
+
+  // The paging fields say whether an empty view means "nothing there" or
+  // "nothing understood", which is the question a log like this gets opened for.
+  auto parsed = json::parse(body, nullptr, false);
+  if (parsed.is_object()) {
+    for (const char* field : {"issues", "values", "columns", "transitions", "comments"})
+      if (parsed.contains(field) && parsed[field].is_array())
+        out << " " << field << "=" << parsed[field].size();
+    if (parsed.contains("total") && parsed["total"].is_number())
+      out << " total=" << parsed["total"].get<long long>();
+    if (parsed.contains("errorMessages")) out << " errors=" << parsed["errorMessages"].dump();
+  } else if (status >= 400) {
+    out << " body=" << body.substr(0, 200);
+  }
+  out << "\n";
 }
 
 std::string str_or(const json& j, const char* key, const std::string& fallback = "") {
@@ -132,7 +162,11 @@ json JiraClient::request(const std::string& method, const std::string& path, con
 
   // The response body is reported verbatim: Jira's own error text is more
   // precise than anything this layer could paraphrase.
-  if (rc != CURLE_OK) throw JiraError(0, curl_easy_strerror(rc), method + " " + path);
+  if (rc != CURLE_OK) {
+    log_request(method, path, 0, curl_easy_strerror(rc));
+    throw JiraError(0, curl_easy_strerror(rc), method + " " + path);
+  }
+  log_request(method, path, status, response);
   if (status >= 400) throw JiraError(status, response, method + " " + path);
 
   if (response.empty()) return json::object();

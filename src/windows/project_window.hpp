@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -59,6 +60,7 @@ class ProjectWindow : public ui::Window {
   void load_board_issues(bool announce = true);
   void choose_board();
   void choose_columns();
+  void choose_board_assignee();
 
   std::string jql_for(Tab tab) const;
   Table& table(Tab tab) { return tables_[static_cast<size_t>(tab)]; }
@@ -91,6 +93,8 @@ class ProjectWindow : public ui::Window {
   // Hidden columns are remembered by name, so they stay hidden across a reload
   // and a column that comes back keeps its state.
   std::vector<std::string> hidden_columns_;
+  // Unset shows every card; empty means the cards nobody is assigned to.
+  std::optional<std::string> board_assignee_;
   bool boards_loaded_ = false;
   int board_total_ = -1;  // -1 until the board has loaded
 };

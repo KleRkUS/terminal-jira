@@ -124,25 +124,24 @@ void ProjectWindow::load_board_issues(bool announce) {
   const std::string board_name = boards_[static_cast<size_t>(board_)].name;
   if (announce) ctx_.set_status(tr("project.status.loadingBoard", {{"name", board_name}}));
 
-  // The column configuration and the issues are two calls; fetch both in one
-  // worker job so the board never renders half-updated.
-  struct Snapshot {
-    std::vector<BoardColumn> columns;
-    IssuePage page;
-  };
+  // The column layout and the issues are two requests, and they are two jobs on
+  // purpose: the configuration needs wider permissions than the issues do, and
+  // one failing must not throw away the other's answer. A card that arrives
+  // without a column still gets one of its own — see board_columns().
+  ui::async(
+      ctx_, life, tr("project.action.loadBoardColumns", {{"name", board_name}}),
+      [this, board_id] { return ctx_.jira().board_columns(board_id); },
+      [this](std::vector<BoardColumn> columns) {
+        config_ = std::move(columns);
+        card_sel_.resize(std::max<size_t>(config_.size(), 1), 0);
+      });
+
   ui::async(
       ctx_, life, tr("project.action.loadBoard", {{"name", board_name}}),
-      [this, board_id] {
-        Snapshot s;
-        s.columns = ctx_.jira().board_columns(board_id);
-        s.page = ctx_.jira().board_issues(board_id, kBoardPageSize, 0);
-        return s;
-      },
-      [this, announce, board_name](Snapshot s) {
-        config_ = std::move(s.columns);
-        board_issues_ = std::move(s.page.issues);
-        board_total_ = s.page.total;
-        card_sel_.resize(std::max<size_t>(config_.size(), 1), 0);
+      [this, board_id] { return ctx_.jira().board_issues(board_id, kBoardPageSize, 0); },
+      [this, announce, board_name](IssuePage page) {
+        board_issues_ = std::move(page.issues);
+        board_total_ = page.total;
         if (!announce) return;  // a quiet refresh leaves the cursor alone
 
         board_col_ = 0;
@@ -169,7 +168,7 @@ void ProjectWindow::choose_board() {
 void ProjectWindow::choose_columns() {
   if (board_ < 0 || board_ >= static_cast<int>(boards_.size())) return;
   const auto columns = board_columns();
-  if (columns.empty()) return;
+  if (columns.empty()) return ctx_.set_status(tr("project.board.columns.none"), true);
   const Board& board = boards_[static_cast<size_t>(board_)];
 
   // Only the names are carried into the callback: the columns themselves point
@@ -201,6 +200,43 @@ void ProjectWindow::choose_columns() {
                                                     {{"count", std::to_string(hidden)},
                                                      {"total", std::to_string(names.size())}}));
                   });
+}
+
+void ProjectWindow::choose_board_assignee() {
+  if (board_ < 0 || board_ >= static_cast<int>(boards_.size())) return;
+  const std::string board_name = boards_[static_cast<size_t>(board_)].name;
+
+  // The names come from the cards on the board rather than from Jira: they are
+  // the only ones that can change what is on screen, and they need no request.
+  std::vector<std::string> names;
+  for (const Issue& issue : board_issues_)
+    if (std::find(names.begin(), names.end(), issue.assignee) == names.end()) names.push_back(issue.assignee);
+  if (names.empty()) return ctx_.set_status(tr("project.board.assignee.none"), true);
+  std::sort(names.begin(), names.end());
+
+  std::vector<std::string> options{tr("project.board.assignee.everyone")};
+  for (const std::string& name : names) {
+    const int count = static_cast<int>(std::count_if(board_issues_.begin(), board_issues_.end(),
+                                                    [&](const Issue& i) { return i.assignee == name; }));
+    options.push_back(tr("project.board.assignee.option",
+                         {{"name", name.empty() ? tr("project.board.assignee.unassigned") : name},
+                          {"count", std::to_string(count)}}));
+  }
+
+  ctx_.choose(tr("project.board.assignee", {{"name", board_name}}), options,
+              [this, names, board_name](int pick) {
+                if (pick == 0) {
+                  board_assignee_.reset();
+                  ctx_.set_status(tr("project.board.assignee.cleared", {{"board", board_name}}));
+                } else {
+                  board_assignee_ = names[static_cast<size_t>(pick - 1)];
+                  const std::string shown =
+                      board_assignee_->empty() ? tr("project.board.assignee.unassigned") : *board_assignee_;
+                  ctx_.set_status(tr("project.board.assignee.set", {{"name", shown}, {"board", board_name}}));
+                }
+                board_col_ = 0;
+                std::fill(card_sel_.begin(), card_sel_.end(), 0);
+              });
 }
 
 void ProjectWindow::reload(bool announce) {
@@ -236,6 +272,9 @@ std::vector<ProjectWindow::Column> ProjectWindow::board_columns() const {
   constexpr size_t kNoColumn = static_cast<size_t>(-1);
   for (const auto& issue : board_issues_) {
     if (!ui::matches(issue.key + " " + issue.summary + " " + issue.assignee, filter_.query)) continue;
+    // An exact name, not a substring: this filter comes from a list of the people
+    // actually on the board, so "Lee" must not also pick up "Lee Harper".
+    if (board_assignee_ && issue.assignee != *board_assignee_) continue;
 
     size_t target = kNoColumn;
     for (size_t i = 0; i < config_.size() && target == kNoColumn; ++i) {
@@ -298,14 +337,21 @@ Element ProjectWindow::render_table() {
   Elements lines;
   for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
     const Issue& issue = *rows[static_cast<size_t>(i)];
+    // The gap is its own cell, not spare room inside a column: a value that fills
+    // its width would otherwise run into the next column.
     auto line = hbox({
         text(" " + issue.key) | color(Color::CyanLight) | size(WIDTH, EQUAL, 14),
+        text(" "),
         text(issue.type) | dim | size(WIDTH, EQUAL, 10),
+        text(" "),
         text(issue.status) | color(ui::status_color(issue.status)) | size(WIDTH, EQUAL, 16),
+        text(" "),
         ui::avatar(issue.assignee),
         text(" " + (issue.assignee.empty() ? tr("project.table.unassigned") : issue.assignee)) |
             size(WIDTH, EQUAL, 20),
+        text(" "),
         text(issue.summary) | flex,
+        text(" "),
         text(ui::relative_time(issue.updated)) | dim | size(WIDTH, EQUAL, 10),
     });
     if (i == t.selected) line = line | inverted | focus;
@@ -318,10 +364,15 @@ Element ProjectWindow::render_table() {
 
   auto header = hbox({
                     text(" " + tr("project.table.columns.key")) | size(WIDTH, EQUAL, 14),
+                    text(" "),
                     text(tr("project.table.columns.type")) | size(WIDTH, EQUAL, 10),
+                    text(" "),
                     text(tr("project.table.columns.status")) | size(WIDTH, EQUAL, 16),
+                    text(" "),
                     text(tr("project.table.columns.assignee")) | size(WIDTH, EQUAL, 22),
+                    text(" "),
                     text(tr("project.table.columns.summary")) | flex,
+                    text(" "),
                     text(tr("project.table.columns.updated")) | size(WIDTH, EQUAL, 10),
                 }) |
                 bold | dim;
@@ -383,22 +434,50 @@ Element ProjectWindow::render_board() {
       text("  " + board.type) | dim,
       filler(),
   };
-  // Say so when columns are missing on purpose, otherwise a board someone
-  // filtered down looks like a board that failed to load.
+  // The heading is where someone wondering about the columns looks, so it names
+  // the key that changes them — the footer cannot hold every hint. It also says
+  // when columns are missing on purpose, otherwise a board someone filtered down
+  // looks like a board that failed to load.
   if (hidden > 0)
     heading_cells.push_back(text(tr("project.board.columns.hidden", {{"count", std::to_string(hidden)}}) + "  ") |
                             color(Color::Yellow));
+  else
+    heading_cells.push_back(text(tr("project.board.columns.hint") + "  ") | dim);
+
+  // Same reason as the column hint: the footer cannot fit every board key, and a
+  // filter nobody can see the key for does not get used.
+  const std::string assignee =
+      board_assignee_ ? (board_assignee_->empty() ? tr("project.board.assignee.unassigned") : *board_assignee_)
+                      : std::string();
   heading_cells.push_back(
-      // Always a count: "every column is empty" and "the board has no issues"
-      // look identical otherwise.
-      text(board_total_ > static_cast<int>(board_issues_.size())
-               ? tr("project.board.showing", {{"shown", std::to_string(board_issues_.size())},
-                                              {"total", std::to_string(board_total_)}}) +
-                     " "
-               : tr("project.board.count", {{"count", std::to_string(board_issues_.size())}}) + " ") |
+      text(tr(assignee.empty() ? "project.board.assignee.hint" : "project.board.assignee.active",
+              {{"name", assignee}}) +
+           "  ") |
+      (assignee.empty() ? dim : color(Color::Yellow)));
+  // Always a count: "every column is empty" and "the board has no issues" look
+  // identical otherwise. Once a filter hides something, the count says how much
+  // of what was loaded is on screen.
+  size_t on_screen = 0;
+  for (const Column& column : columns) on_screen += column.cards.size();
+  const bool everything = on_screen == board_issues_.size() &&
+                          board_total_ <= static_cast<int>(board_issues_.size());
+  heading_cells.push_back(
+      text(everything ? tr("project.board.count", {{"count", std::to_string(board_issues_.size())}}) + " "
+                      : tr("project.board.showing",
+                           {{"shown", std::to_string(on_screen)},
+                            {"total", std::to_string(std::max<int>(board_total_,
+                                                                   static_cast<int>(board_issues_.size())))}}) +
+                            " ") |
       dim);
   auto heading = hbox(std::move(heading_cells));
-  return vbox({heading, separator(), ui::equal_columns(std::move(rendered)) | flex});
+
+  // A board with columns but no cards is the one state that looks like a broken
+  // app rather than an empty board, so it says which it is.
+  Elements body{heading, separator()};
+  if (board_issues_.empty() && board_total_ >= 0)
+    body.push_back(ui::empty_hint(tr("project.board.noIssues")));
+  body.push_back(ui::equal_columns(std::move(rendered)) | flex);
+  return vbox(std::move(body));
 }
 
 Element ProjectWindow::render() {
@@ -433,6 +512,21 @@ bool ProjectWindow::on_table_event(const Event& event) {
 }
 
 bool ProjectWindow::on_board_event(const Event& event) {
+  if (event == Event::Character('b')) {
+    choose_board();
+    return true;
+  }
+  // Before the early return below: on a board with nothing on it these are the
+  // keys worth pressing, and they used to be dead.
+  if (event == Event::Character('c')) {
+    choose_columns();
+    return true;
+  }
+  if (event == Event::Character('f')) {
+    choose_board_assignee();
+    return true;
+  }
+
   const auto columns = shown_columns();
   if (columns.empty()) return false;
   if (card_sel_.size() < columns.size()) card_sel_.resize(columns.size(), 0);
@@ -451,14 +545,6 @@ bool ProjectWindow::on_board_event(const Event& event) {
     return true;
   }
   if (ui::motion(event, selected, cards)) return true;
-  if (event == Event::Character('b')) {
-    choose_board();
-    return true;
-  }
-  if (event == Event::Character('c')) {
-    choose_columns();
-    return true;
-  }
   return false;
 }
 
@@ -509,6 +595,7 @@ std::vector<ui::KeyHelp> ProjectWindow::keys() const {
     out.push_back({"j / k", tr("project.keys.cards")});
     out.push_back({"b", tr("project.keys.switchBoard")});
     out.push_back({"c", tr("project.keys.pickColumns")});
+    out.push_back({"f", tr("project.keys.pickAssignee")});
   } else {
     out.push_back({"j / k", tr("project.keys.move")});
     out.push_back({"g / G, d / u", tr("project.keys.jump")});
