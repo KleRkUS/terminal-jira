@@ -159,6 +159,12 @@ unfilled placeholder stays as `{name}`, so both turn up in a recording.
 grep -nE '!\w+(\.\w+)+!|\{[a-z]+\}' /tmp/nav.txt
 ```
 
+A recording only shows the screens it visited. `tests/check_strings.py` reads
+the source instead and fails on any key passed to `tr()` or `tr_list()` that the
+catalog lacks, wherever it is used. Keys built at runtime are invisible to it,
+apart from the `"prefix." + TERMINAL_JIRA_PLATFORM` form, which it checks
+against every module in `src/platform/`. CI runs it on every pull request.
+
 To see a translation at work without building one, drop a partial catalog in the
 config directory the test is using and select it:
 

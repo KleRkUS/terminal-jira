@@ -1,0 +1,175 @@
+name: Release
+
+# A release is cut by merging a pull request titled "Release: <version>" into
+# main, e.g. "Release: 1.2.0" or "Release: v1.3.0-rc.1". A version with a
+# "-suffix" is published as a pre-release.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Two releases racing would fight over tags; queue them instead.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Read the version
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Release:')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+      tag: ${{ steps.parse.outputs.tag }}
+      prerelease: ${{ steps.parse.outputs.prerelease }}
+    steps:
+      # The title goes through env, never into the script text: it is user input.
+      - name: Parse the PR title
+        id: parse
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          version=${TITLE#Release:}
+          version=$(echo "$version" | xargs)
+          version=${version#v}
+          if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$TITLE' does not name a version. Use 'Release: 1.2.3' (optionally v1.2.3 or 1.2.3-rc.1)."
+            exit 1
+          fi
+          prerelease=false
+          [[ $version == *-* ]] && prerelease=true
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (pre-release: $prerelease)"
+
+      - name: The tag is not taken
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.parse.outputs.tag }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --silent 2>/dev/null; then
+            echo "::error::$TAG already exists. Bump the version in the PR title."
+            exit 1
+          fi
+
+  validate:
+    name: Validate
+    needs: version
+    uses: ./.github/workflows/validate-pr.yaml
+    with:
+      ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: [version, validate]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # The oldest supported runner, so the binary needs the oldest glibc.
+          - target: linux-x86_64
+            runner: ubuntu-22.04
+            platform: linux
+          - target: macos-arm64
+            runner: macos-14
+            platform: mac
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PACKAGE: terminal-jira-${{ needs.version.outputs.version }}-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+
+      - name: Dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
+
+      # Every timestamp and path that could end up in the output is pinned, so
+      # the same commit gives the same binary.
+      - name: Pin build inputs
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DTERMINAL_JIRA_PLATFORM=${{ matrix.platform }}
+          -DTERMINAL_JIRA_VERSION="$VERSION"
+          -DTERMINAL_JIRA_TESTS=OFF
+          -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$GITHUB_WORKSPACE=."
+
+      - name: Build
+        run: cmake --build build --target terminal-jira --parallel 4
+
+      - name: The binary reports this version
+        run: |
+          reported=$(build/terminal-jira --version)
+          echo "$reported"
+          [ "$reported" = "terminal-jira $VERSION (${{ matrix.platform }})" ]
+
+      - name: Package
+        run: |
+          mkdir "$PACKAGE"
+          cp build/terminal-jira "$PACKAGE/"
+          strip "$PACKAGE/terminal-jira"
+          cp LICENSE README.md THIRD-PARTY-NOTICES.md config.example.json "$PACKAGE/"
+          if [ "${{ matrix.platform }}" = linux ]; then
+            tar --sort=name --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
+              -cf "$PACKAGE.tar" "$PACKAGE"
+          else
+            tar -cf "$PACKAGE.tar" "$PACKAGE"
+          fi
+          gzip -n -9 "$PACKAGE.tar"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE }}
+          path: ${{ env.PACKAGE }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish ${{ needs.version.outputs.tag }}
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz | tee SHA256SUMS
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          TARGET: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          flags=()
+          [ "$PRERELEASE" = true ] && flags+=(--prerelease)
+          gh release create "$TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET" \
+            --title "terminal-jira $VERSION" \
+            --generate-notes \
+            "${flags[@]}"

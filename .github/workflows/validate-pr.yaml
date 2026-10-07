@@ -1,0 +1,164 @@
+name: Validate PR
+
+on:
+  pull_request:
+
+  workflow_dispatch:
+
+  # release.yaml runs these same checks before building anything.
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to check out; empty means the event's own commit
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# A new push to the same PR makes the running checks pointless. Under
+# workflow_call, github.workflow is the caller's name, so a release never
+# cancels — or is cancelled by — a PR's own run.
+concurrency:
+  group: ${{ github.workflow }}-validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Licence header on every source file
+        run: |
+          status=0
+          for file in $(git ls-files 'src/*.cpp' 'src/*.hpp' 'tests/*.cpp' 'tests/*.py' 'tests/*.sh' CMakeLists.txt); do
+            if ! grep -q 'SPDX-License-Identifier: GPL-3.0-or-later' "$file"; then
+              echo "::error file=$file::missing 'SPDX-License-Identifier: GPL-3.0-or-later'"
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Every translation key used in src/ exists
+        run: python3 tests/check_strings.py
+
+      - name: Test scripts
+        run: |
+          bash -n tests/*.sh
+          shellcheck --severity=warning tests/*.sh
+          python3 -m py_compile tests/*.py
+
+  linux:
+    name: Linux build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DTERMINAL_JIRA_WERROR=ON
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      # Includes the smoke test. KEEP plus TMPDIR leave its recordings and
+      # server logs somewhere the upload step below can find them.
+      - name: Test
+        working-directory: build
+        env:
+          KEEP: "1"
+          TMPDIR: ${{ runner.temp }}/smoke
+        run: |
+          mkdir -p "$TMPDIR"
+          ctest --output-on-failure
+
+      - name: Keep smoke artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-linux
+          path: ${{ runner.temp }}/smoke
+          retention-days: 7
+
+  sanitizers:
+    name: Linux tests under ASan and UBSan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libcurl4-openssl-dev
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      # The app runs inside script(1) during the smoke test, so a report printed
+      # to the terminal would end up in a recording rather than failing the job.
+      # Reports go to files instead, and any file is a failure.
+      - name: Test
+        working-directory: build
+        env:
+          ASAN_OPTIONS: log_path=${{ runner.temp }}/sanitizers/asan
+          UBSAN_OPTIONS: print_stacktrace=1:log_path=${{ runner.temp }}/sanitizers/ubsan
+        run: |
+          mkdir -p "$RUNNER_TEMP/sanitizers"
+          ctest --output-on-failure
+
+      - name: No sanitizer reports
+        if: always()
+        run: |
+          shopt -s nullglob
+          reports=("$RUNNER_TEMP"/sanitizers/*)
+          for report in "${reports[@]}"; do
+            echo "::group::$report"
+            cat "$report"
+            echo "::endgroup::"
+          done
+          if [ ${#reports[@]} -gt 0 ]; then
+            echo "::error::${#reports[@]} sanitizer report(s)"
+            exit 1
+          fi
+
+  mac:
+    name: macOS build and tests
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      # curl comes with the SDK. The smoke test is not registered for mac: it
+      # needs the util-linux script(1).
+      - name: Configure
+        run: cmake -S . -B build -DTERMINAL_JIRA_PLATFORM=mac
+
+      - name: Build
+        run: cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure

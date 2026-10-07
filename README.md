@@ -31,7 +31,13 @@ the board — without opening a browser tab.
 
 ## Install
 
-You need a C++20 compiler, CMake 3.20+, and libcurl. FTXUI and nlohmann/json are
+Prebuilt binaries for Linux (x86_64) and macOS (Apple Silicon) are attached to
+each [release](https://github.com/KleRkUS/terminal-jira/releases), with a
+`SHA256SUMS` file. The Linux binary needs libcurl installed (`libcurl4` on
+Debian/Ubuntu); macOS already has it. Unpack, put `terminal-jira` on your `PATH`,
+and check it with `terminal-jira --version`.
+
+To build it yourself, you need a C++20 compiler, CMake 3.20+, and libcurl. FTXUI and nlohmann/json are
 downloaded automatically during configuration, so you do not install those.
 
 ```bash
@@ -52,6 +58,8 @@ git clone <this-repo> terminal-jira && cd terminal-jira
 cmake -S . -B build
 cmake --build build -j
 ```
+
+On macOS, configure with `cmake -S . -B build -DTERMINAL_JIRA_PLATFORM=mac`.
 
 The binary is `build/terminal-jira`. Copy it onto your `PATH` if you like:
 

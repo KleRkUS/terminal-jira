@@ -63,6 +63,8 @@ project root if your editor expects it there.
 
 `-DTERMINAL_JIRA_TESTS=OFF` skips building the tests. `-DTERMINAL_JIRA_PLATFORM`
 selects the platform module; see above. The default is `linux`.
+`-DTERMINAL_JIRA_WERROR=ON` turns warnings into errors in our own targets (not
+in FTXUI or json); CI builds that way.
 
 ## Test
 
@@ -80,8 +82,8 @@ Three tests:
 - **`smoke`** — starts a stub Jira server, drives the real binary through all
   three windows under a pseudo-terminal, and asserts on both the frames it drew
   and the requests it sent, including the error popups raised by rejected
-  requests. Forty-three checks. Registered only if `python3` and `script` are
-  available.
+  requests. Forty-three checks. Registered only for the `linux` platform, and
+  only if `python3` and `script` are available.
 
 Run the end-to-end test directly for readable output:
 
@@ -117,10 +119,48 @@ That path is also how a user can translate the app themselves.
    the `?` overlay are generated from it.
 4. If you added a Jira call, `tests/fake_jira.py` answers it.
 5. If you added any text, it is a key in `src/strings/en.cpp`, not a literal.
-6. New source files are added to `CMakeLists.txt`.
+6. New source files are added to `CMakeLists.txt`, and carry the SPDX header.
+
+`.github/workflows/validate-pr.yaml` checks most of this on every pull request,
+and all of its jobs must pass:
+
+- **Static checks** — the SPDX header on every source file,
+  `tests/check_strings.py` (every key passed to `tr()` exists in the catalog),
+  and `bash -n`, `shellcheck` and `py_compile` over the test scripts.
+- **Linux** — a `-DTERMINAL_JIRA_WERROR=ON` build and the full `ctest`,
+  smoke test included. A failed run uploads the smoke recordings as an artifact.
+- **Sanitizers** — the same tests built with ASan and UBSan. Any sanitizer
+  report fails the job, even one the tests themselves did not notice.
+- **macOS** — a `-DTERMINAL_JIRA_PLATFORM=mac` build and the unit tests.
+
+Run the static checks locally before pushing: `python3 tests/check_strings.py`
+is instant.
 
 Say in the pull request what you verified and what you could not. The stub server
 is permissive, so anything depending on a real response shape deserves a note.
+
+## Releasing
+
+A release is cut by merging a pull request titled `Release: <version>` into
+`main` — `Release: 1.2.0`, or `Release: 1.3.0-rc.1` for a pre-release (any
+`-suffix` marks one). `.github/workflows/release.yaml` then:
+
+1. reads the version from the title, and stops if it is not `X.Y.Z[-suffix]`
+   or the tag `vX.Y.Z` already exists;
+2. runs every job of the pull-request workflow against the merged commit;
+3. builds `linux-x86_64` (on Ubuntu 22.04, for an older glibc) and
+   `macos-arm64` with `-DTERMINAL_JIRA_VERSION=<version>`, checks that
+   `--version` reports it, and packages the stripped binary with the licence,
+   notices, README and example config;
+4. tags the merged commit and publishes a GitHub release with the archives, a
+   `SHA256SUMS` file, and generated notes.
+
+Build paths are mapped away and the Linux archive pins timestamps, owners and
+file order, so packing the same binary twice gives the same bytes.
+
+A pull request that is closed without merging, or whose title does not start
+with `Release:`, releases nothing. Outside a release the version is
+`0.0.0-dev`.
 
 ## Where things live
 

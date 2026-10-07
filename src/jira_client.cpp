@@ -149,7 +149,7 @@ json JiraClient::request(const std::string& method, const std::string& path, con
   curl_easy_setopt(c, CURLOPT_WRITEDATA, &response);
   curl_easy_setopt(c, CURLOPT_TIMEOUT, 30L);
   curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
-  curl_easy_setopt(c, CURLOPT_USERAGENT, "terminal-jira/0.1");
+  curl_easy_setopt(c, CURLOPT_USERAGENT, "terminal-jira/" TERMINAL_JIRA_VERSION);
   if (body) {
     curl_easy_setopt(c, CURLOPT_POSTFIELDS, payload.c_str());
     curl_easy_setopt(c, CURLOPT_POSTFIELDSIZE, static_cast<long>(payload.size()));
