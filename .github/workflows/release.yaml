@@ -1,12 +1,18 @@
 name: Release
 
 # A release is cut by merging a pull request titled "Release: <version>" into
-# main, e.g. "Release: 1.2.0" or "Release: v1.3.0-rc.1". A version with a
-# "-suffix" is published as a pre-release.
+# main. The version itself lives in CMakeLists.txt (TERMINAL_JIRA_VERSION); the
+# release PR bumps it, and the title must name the same version. A version with
+# a "-suffix" is published as a pre-release.
+#
+# It can also be run by hand from the Actions tab, on main only; that releases
+# main's current head at the version CMakeLists.txt holds there.
 on:
   pull_request:
     types: [closed]
     branches: [main]
+
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,26 +25,45 @@ concurrency:
 jobs:
   version:
     name: Read the version
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Release:')
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Release:'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.parse.outputs.version }}
-      tag: ${{ steps.parse.outputs.tag }}
-      prerelease: ${{ steps.parse.outputs.prerelease }}
+      version: ${{ steps.read.outputs.version }}
+      tag: ${{ steps.read.outputs.tag }}
+      prerelease: ${{ steps.read.outputs.prerelease }}
+      commit: ${{ steps.commit.outputs.sha }}
     steps:
+      # A manual run is allowed onto this job so that a wrong branch fails with
+      # a reason instead of every job being skipped.
+      - name: Manual runs are on main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are made from main; this run was started on $GITHUB_REF_NAME."
+          exit 1
+
+      - name: The commit to release
+        id: commit
+        env:
+          MERGED: ${{ github.event.pull_request.merge_commit_sha }}
+        run: echo "sha=${MERGED:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.commit.outputs.sha }}
+
       # The title goes through env, never into the script text: it is user input.
-      - name: Parse the PR title
-        id: parse
+      - name: Read the version from CMakeLists.txt
+        id: read
         env:
           TITLE: ${{ github.event.pull_request.title }}
         run: |
-          version=${TITLE#Release:}
-          version=$(echo "$version" | xargs)
-          version=${version#v}
-          if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::'$TITLE' does not name a version. Use 'Release: 1.2.3' (optionally v1.2.3 or 1.2.3-rc.1)."
-            exit 1
+          if [ -n "$TITLE" ]; then
+            version=$(.github/scripts/release-version.sh "$TITLE")
+          else
+            version=$(.github/scripts/release-version.sh)
           fi
           prerelease=false
           [[ $version == *-* ]] && prerelease=true
@@ -52,10 +77,10 @@ jobs:
       - name: The tag is not taken
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.parse.outputs.tag }}
+          TAG: ${{ steps.read.outputs.tag }}
         run: |
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --silent 2>/dev/null; then
-            echo "::error::$TAG already exists. Bump the version in the PR title."
+            echo "::error::$TAG already exists. Bump TERMINAL_JIRA_VERSION in CMakeLists.txt."
             exit 1
           fi
 
@@ -64,7 +89,7 @@ jobs:
     needs: version
     uses: ./.github/workflows/validate-pr.yaml
     with:
-      ref: ${{ github.event.pull_request.merge_commit_sha }}
+      ref: ${{ needs.version.outputs.commit }}
 
   build:
     name: Build ${{ matrix.target }}
@@ -88,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ needs.version.outputs.commit }}
 
       - name: Dependencies
         if: matrix.platform == 'linux'
@@ -106,7 +131,6 @@ jobs:
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DTERMINAL_JIRA_PLATFORM=${{ matrix.platform }}
-          -DTERMINAL_JIRA_VERSION="$VERSION"
           -DTERMINAL_JIRA_TESTS=OFF
           -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$GITHUB_WORKSPACE=."
 
@@ -163,7 +187,7 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
-          TARGET: ${{ github.event.pull_request.merge_commit_sha }}
+          TARGET: ${{ needs.version.outputs.commit }}
         run: |
           flags=()
           [ "$PRERELEASE" = true ] && flags+=(--prerelease)

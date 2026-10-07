@@ -36,7 +36,7 @@ jobs:
       - name: Licence header on every source file
         run: |
           status=0
-          for file in $(git ls-files 'src/*.cpp' 'src/*.hpp' 'tests/*.cpp' 'tests/*.py' 'tests/*.sh' CMakeLists.txt); do
+          for file in $(git ls-files 'src/*.cpp' 'src/*.hpp' 'tests/*.cpp' 'tests/*.py' 'tests/*.sh' '.github/scripts/*.sh' CMakeLists.txt); do
             if ! grep -q 'SPDX-License-Identifier: GPL-3.0-or-later' "$file"; then
               echo "::error file=$file::missing 'SPDX-License-Identifier: GPL-3.0-or-later'"
               status=1
@@ -47,10 +47,22 @@ jobs:
       - name: Every translation key used in src/ exists
         run: python3 tests/check_strings.py
 
-      - name: Test scripts
+      # On a "Release: X.Y.Z" PR the title must match CMakeLists.txt, so a
+      # mismatch is caught before merging rather than by the release run.
+      - name: Version in CMakeLists.txt
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
         run: |
-          bash -n tests/*.sh
-          shellcheck --severity=warning tests/*.sh
+          if [[ $TITLE == Release:* ]]; then
+            .github/scripts/release-version.sh "$TITLE"
+          else
+            .github/scripts/release-version.sh
+          fi
+
+      - name: Scripts
+        run: |
+          bash -n tests/*.sh .github/scripts/*.sh
+          shellcheck --severity=warning tests/*.sh .github/scripts/*.sh
           python3 -m py_compile tests/*.py
 
   linux:

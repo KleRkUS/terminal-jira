@@ -141,26 +141,40 @@ is permissive, so anything depending on a real response shape deserves a note.
 
 ## Releasing
 
-A release is cut by merging a pull request titled `Release: <version>` into
-`main` — `Release: 1.2.0`, or `Release: 1.3.0-rc.1` for a pre-release (any
-`-suffix` marks one). `.github/workflows/release.yaml` then:
+The version lives in one place, a line in `CMakeLists.txt`:
 
-1. reads the version from the title, and stops if it is not `X.Y.Z[-suffix]`
-   or the tag `vX.Y.Z` already exists;
+```cmake
+set(TERMINAL_JIRA_VERSION "0.1.0")
+```
+
+It is compiled into the binary (`terminal-jira --version`, and the User-Agent
+sent to Jira), and every release takes it from there. Use `X.Y.Z`, or
+`X.Y.Z-suffix` (`1.3.0-rc.1`) for a pre-release. Keep the line in exactly this
+form: `.github/scripts/release-version.sh` reads it back.
+
+To cut a release, open a pull request into `main` that bumps that line and is
+titled `Release: <the same version>`. The PR checks fail if the title and the
+file disagree, so a mismatch is caught before merging. When it is merged,
+`.github/workflows/release.yaml`:
+
+1. reads the version from `CMakeLists.txt` on the merged commit, checks the
+   title again, and stops if the tag `vX.Y.Z` already exists;
 2. runs every job of the pull-request workflow against the merged commit;
 3. builds `linux-x86_64` (on Ubuntu 22.04, for an older glibc) and
-   `macos-arm64` with `-DTERMINAL_JIRA_VERSION=<version>`, checks that
-   `--version` reports it, and packages the stripped binary with the licence,
-   notices, README and example config;
+   `macos-arm64`, checks that `--version` reports the version, and packages
+   the stripped binary with the licence, notices, README and example config;
 4. tags the merged commit and publishes a GitHub release with the archives, a
    `SHA256SUMS` file, and generated notes.
 
 Build paths are mapped away and the Linux archive pins timestamps, owners and
 file order, so packing the same binary twice gives the same bytes.
 
+It can also be run by hand: Actions → Release → Run workflow, on `main`. That
+releases the current head of `main` at whatever version `CMakeLists.txt` holds
+there; started on any other branch, it fails at the first step.
+
 A pull request that is closed without merging, or whose title does not start
-with `Release:`, releases nothing. Outside a release the version is
-`0.0.0-dev`.
+with `Release:`, releases nothing.
 
 ## Where things live
 

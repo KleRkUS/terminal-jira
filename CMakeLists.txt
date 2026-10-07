@@ -35,8 +35,10 @@ endif()
 
 message(STATUS "terminal-jira platform: ${TERMINAL_JIRA_PLATFORM}")
 
-# Set by the release workflow from the PR title; anything else is a dev build.
-set(TERMINAL_JIRA_VERSION "0.0.0-dev" CACHE STRING "Version reported by --version and the User-Agent")
+# The one place the version lives. A release PR bumps it, and the release
+# workflow reads it back from this exact line — keep it on one line, in this
+# form: X.Y.Z, or X.Y.Z-suffix for a pre-release.
+set(TERMINAL_JIRA_VERSION "0.1.0")
 message(STATUS "terminal-jira version: ${TERMINAL_JIRA_VERSION}")
 
 include(FetchContent)
