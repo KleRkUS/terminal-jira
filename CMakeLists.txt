@@ -35,6 +35,10 @@ endif()
 
 message(STATUS "terminal-jira platform: ${TERMINAL_JIRA_PLATFORM}")
 
+# Set by the release workflow from the PR title; anything else is a dev build.
+set(TERMINAL_JIRA_VERSION "0.0.0-dev" CACHE STRING "Version reported by --version and the User-Agent")
+message(STATUS "terminal-jira version: ${TERMINAL_JIRA_VERSION}")
+
 include(FetchContent)
 
 FetchContent_Declare(ftxui
@@ -56,6 +60,16 @@ function(terminal_jira_platform target)
   target_compile_definitions(${target} PRIVATE "TERMINAL_JIRA_PLATFORM=\"${TERMINAL_JIRA_PLATFORM}\"")
 endfunction()
 
+# Applied to our own targets only, so a warning inside FTXUI or json cannot
+# break the build.
+option(TERMINAL_JIRA_WERROR "Treat compiler warnings in terminal-jira code as errors" OFF)
+function(terminal_jira_warnings target)
+  target_compile_options(${target} PRIVATE -Wall -Wextra)
+  if(TERMINAL_JIRA_WERROR)
+    target_compile_options(${target} PRIVATE -Werror)
+  endif()
+endfunction()
+
 add_executable(terminal-jira
   src/main.cpp
   src/app.cpp
@@ -70,9 +84,10 @@ add_executable(terminal-jira
   src/windows/project_window.cpp
   src/windows/ticket_window.cpp)
 terminal_jira_platform(terminal-jira)
+target_compile_definitions(terminal-jira PRIVATE "TERMINAL_JIRA_VERSION=\"${TERMINAL_JIRA_VERSION}\"")
 
 target_include_directories(terminal-jira PRIVATE src)
-target_compile_options(terminal-jira PRIVATE -Wall -Wextra)
+terminal_jira_warnings(terminal-jira)
 target_link_libraries(terminal-jira PRIVATE
   ftxui::screen ftxui::dom ftxui::component
   nlohmann_json::nlohmann_json
@@ -84,7 +99,7 @@ if(TERMINAL_JIRA_TESTS)
 
   add_executable(adf_test tests/adf_test.cpp src/adf.cpp)
   target_include_directories(adf_test PRIVATE src)
-  target_compile_options(adf_test PRIVATE -Wall -Wextra)
+  terminal_jira_warnings(adf_test)
   target_link_libraries(adf_test PRIVATE nlohmann_json::nlohmann_json)
   add_test(NAME adf COMMAND adf_test)
 
@@ -92,15 +107,16 @@ if(TERMINAL_JIRA_TESTS)
                  src/config.cpp)
   terminal_jira_platform(translations_test)
   target_include_directories(translations_test PRIVATE src)
-  target_compile_options(translations_test PRIVATE -Wall -Wextra)
+  terminal_jira_warnings(translations_test)
   target_link_libraries(translations_test PRIVATE nlohmann_json::nlohmann_json)
   add_test(NAME translations COMMAND translations_test)
 
-  # End to end against tests/fake_jira.py. Needs python3 and script(1), so it is
-  # registered only when both are present.
+  # End to end against tests/fake_jira.py. Needs python3 and the util-linux
+  # script(1) — the BSD one on macOS takes different arguments — so it is
+  # registered only for the linux platform and when both are present.
   find_package(Python3 COMPONENTS Interpreter)
   find_program(SCRIPT_EXECUTABLE script)
-  if(Python3_Interpreter_FOUND AND SCRIPT_EXECUTABLE)
+  if(TERMINAL_JIRA_PLATFORM STREQUAL "linux" AND Python3_Interpreter_FOUND AND SCRIPT_EXECUTABLE)
     add_test(NAME smoke
              COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/smoke.sh $<TARGET_FILE:terminal-jira>)
     set_tests_properties(smoke PROPERTIES TIMEOUT 300)
