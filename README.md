@@ -69,7 +69,9 @@ mkdir -p ~/.local/bin && cp build/terminal-jira ~/.local/bin/
 
 ## Connect it to your Jira
 
-Create `~/.config/terminal-jira/config.json`:
+On Linux, create `~/.config/terminal-jira/config.json` (or
+`$XDG_CONFIG_HOME/terminal-jira/config.json` if you set that variable). On macOS
+the file lives elsewhere — see [On macOS](#on-macos) below.
 
 ```json
 {
@@ -105,12 +107,47 @@ JIRA_URL=https://other.atlassian.net terminal-jira
 | `TERMINAL_JIRA_LANG` | `language` |
 | `TERMINAL_JIRA_ALLOW_HTTP` | set to `1` to permit a plain `http://` URL |
 
+### On macOS
+
+The macOS build keeps everything in the standard place for app data rather than
+`~/.config`:
+
+| What | Where |
+| --- | --- |
+| Config | `~/Library/Application Support/terminal-jira/config.json` |
+| Your translations | `~/Library/Application Support/terminal-jira/locales/<code>.json` |
+
+`XDG_CONFIG_HOME` is not consulted. The file has the same contents as above; to
+create it:
+
+```bash
+mkdir -p ~/Library/Application\ Support/terminal-jira
+cp config.example.json ~/Library/Application\ Support/terminal-jira/config.json
+open -e ~/Library/Application\ Support/terminal-jira/config.json
+```
+
+(`config.example.json` is in the release archive and the repository root.) Mind
+the space in `Application Support` — quote or escape the path in the shell.
+
+Everything else works as on Linux: the environment variables above override the
+file, the file is tightened to `600` if others can read it, and the token is
+kept out of the editor's and browser's environment. Links open in your default
+browser through `open`, and `y` copies with `pbcopy`.
+
+If you downloaded the binary from a release and macOS refuses to run it as
+coming from an unidentified developer, clear the quarantine flag once:
+
+```bash
+xattr -d com.apple.quarantine ./terminal-jira
+```
+
 ### Language
 
 Every word the interface shows comes from a string catalog, and English is the
 only one that ships today. If you want another, write one: copy
 [src/strings/en.cpp](src/strings/en.cpp) into
-`~/.config/terminal-jira/locales/<code>.json` — the part between the `R"json(` and
+`~/.config/terminal-jira/locales/<code>.json` (on macOS, under
+`~/Library/Application Support/terminal-jira/locales/`) — the part between the `R"json(` and
 `)json` markers is the file — translate the values, and point the config at it:
 
 ```json
