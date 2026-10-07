@@ -3,10 +3,20 @@ name: Release
 # A release is cut by merging a pull request titled "Release: <version>" into
 # main, e.g. "Release: 1.2.0" or "Release: v1.3.0-rc.1". A version with a
 # "-suffix" is published as a pre-release.
+#
+# It can also be run by hand from the Actions tab, on main only, with the
+# version typed in; that releases main's current head.
 on:
   pull_request:
     types: [closed]
     branches: [main]
+
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. 1.2.0 or 1.3.0-rc.1
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,19 +29,37 @@ concurrency:
 jobs:
   version:
     name: Read the version
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Release:')
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true && startsWith(github.event.pull_request.title, 'Release:'))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.parse.outputs.version }}
       tag: ${{ steps.parse.outputs.tag }}
       prerelease: ${{ steps.parse.outputs.prerelease }}
+      commit: ${{ steps.commit.outputs.sha }}
     steps:
-      # The title goes through env, never into the script text: it is user input.
-      - name: Parse the PR title
+      # A manual run is allowed onto this job so that a wrong branch fails with
+      # a reason instead of every job being skipped.
+      - name: Manual runs are on main
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are made from main; this run was started on $GITHUB_REF_NAME."
+          exit 1
+
+      - name: The commit to release
+        id: commit
+        env:
+          MERGED: ${{ github.event.pull_request.merge_commit_sha }}
+        run: echo "sha=${MERGED:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      # The title and input go through env, never into the script text: they
+      # are user input.
+      - name: Parse the version
         id: parse
         env:
-          TITLE: ${{ github.event.pull_request.title }}
+          TITLE: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.event.pull_request.title }}
         run: |
           version=${TITLE#Release:}
           version=$(echo "$version" | xargs)
@@ -64,7 +92,7 @@ jobs:
     needs: version
     uses: ./.github/workflows/validate-pr.yaml
     with:
-      ref: ${{ github.event.pull_request.merge_commit_sha }}
+      ref: ${{ needs.version.outputs.commit }}
 
   build:
     name: Build ${{ matrix.target }}
@@ -88,7 +116,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          ref: ${{ needs.version.outputs.commit }}
 
       - name: Dependencies
         if: matrix.platform == 'linux'
@@ -163,7 +191,7 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
-          TARGET: ${{ github.event.pull_request.merge_commit_sha }}
+          TARGET: ${{ needs.version.outputs.commit }}
         run: |
           flags=()
           [ "$PRERELEASE" = true ] && flags+=(--prerelease)

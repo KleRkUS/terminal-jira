@@ -158,6 +158,10 @@ A release is cut by merging a pull request titled `Release: <version>` into
 Build paths are mapped away and the Linux archive pins timestamps, owners and
 file order, so packing the same binary twice gives the same bytes.
 
+It can also be run by hand: Actions → Release → Run workflow, on `main`, with
+the version typed in (same format, no `Release:` needed). That releases the
+current head of `main`; started on any other branch, it fails at the first step.
+
 A pull request that is closed without merging, or whose title does not start
 with `Release:`, releases nothing. Outside a release the version is
 `0.0.0-dev`.
