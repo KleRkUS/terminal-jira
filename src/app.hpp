@@ -47,6 +47,8 @@ class App : public ui::Context {
   void check_list(std::string title, std::vector<std::string> options, std::vector<bool> checked,
                   std::function<void(const std::vector<bool>&)> on_done) override;
   void confirm(std::string question, std::function<void()> on_yes) override;
+  void block(std::string message) override;
+  void unblock() override;
   bool edit_externally(const std::string& initial, std::string& out) override;
   void open_in_browser(const std::string& url) override;
   bool copy_to_clipboard(const std::string& text) override;
@@ -99,6 +101,9 @@ class App : public ui::Context {
   std::string status_;
   bool status_error_ = false;
   std::string notice_;
+
+  bool blocked_ = false;
+  std::string block_message_;
 
   // A failed request, shown bottom right until it ages out.
   struct Toast {

@@ -30,8 +30,9 @@ tests/smoke.sh build/terminal-jira
 
 It starts the stub on port 8723, drives the binary through all three windows, and
 checks both halves of the contract: what was drawn, and what was sent.
-Forty-three checks covering navigation, the board view, board column widths and
-mapping, hiding columns, mutations, copying to the clipboard, the ticket field editors, dialog cancellation, the auth scheme, and the
+Fifty-four checks covering navigation, the board view, board column widths and
+mapping, hiding columns, mutations, changing several tickets in visual mode
+(with writes slowed by `--slow-writes` so keys arrive mid-run), copying to the clipboard, the ticket field editors, dialog cancellation, the auth scheme, and the
 error popups. Output
 is one line per check, and the exit status is the number of failures.
 

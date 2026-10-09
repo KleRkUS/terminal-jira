@@ -80,6 +80,14 @@ endpoint, which already accounts for the workflow and the user's permissions.
 Assignees come from `user/assignable/search`, not a list of all users. Never
 hard-code a status name or a workflow step.
 
+**There is no portable bulk edit.** Cloud has `/rest/api/3/bulk/issues/...`, but
+it is asynchronous, needs the bulk-change global permission, and Server and
+Data Center do not have it. Changing several tickets is therefore one
+transitions or assignable-users read per ticket, then one write per ticket, sent
+in turn on the worker thread while the UI is blocked (`ui::Context::block`).
+Tickets can sit on different workflows, so the choices offered are the ones all
+of them share, and each ticket moves by its own transition id.
+
 **Report failures verbatim.** `request()` throws `JiraError` carrying the status
 code and the unmodified response body (status `0` and the transport error when the
 request never arrived). Jira's own `errorMessages` and field-keyed `errors` are

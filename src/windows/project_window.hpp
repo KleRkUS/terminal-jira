@@ -70,6 +70,9 @@ class ProjectWindow : public ui::Window {
   std::vector<Column> shown_columns() const;
   const Issue* current_issue() const;
   void open_current();
+  // The run of rows between the visual anchor and the cursor, in list order.
+  std::vector<const Issue*> visual_rows() const;
+  bool in_visual_range(int row) const;
 
   ftxui::Element render_table();
   ftxui::Element render_board();
@@ -83,6 +86,10 @@ class ProjectWindow : public ui::Window {
   int tab_ = TabMine;
   ui::Filter filter_;
   Table tables_[TabCount];
+  // Visual mode, on the ticket lists only. The selection is by row index, so
+  // anything that reorders or refilters the rows ends it.
+  bool visual_ = false;
+  int visual_anchor_ = 0;
 
   std::vector<Board> boards_;
   std::vector<BoardColumn> config_;

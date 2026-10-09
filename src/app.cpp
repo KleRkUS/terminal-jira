@@ -212,6 +212,16 @@ void App::confirm(std::string question, std::function<void()> on_yes) {
   on_yes_ = std::move(on_yes);
 }
 
+void App::block(std::string message) {
+  blocked_ = true;
+  block_message_ = std::move(message);
+}
+
+void App::unblock() {
+  blocked_ = false;
+  block_message_.clear();
+}
+
 void App::close_modal() {
   modal_ = Modal::None;
   modal_title_.clear();
@@ -311,6 +321,12 @@ Element App::render() {
   if (!toasts_.empty()) body = dbox({std::move(body), render_toasts()});
 
   Element screen = render_chrome(std::move(body));
+  if (blocked_)
+    return dbox({std::move(screen) | dim,
+                 window(text(" " + tr("app.blocked.title") + " ") | bold,
+                        vbox({text(" " + block_message_ + " "), separator(),
+                              text(" " + tr("app.blocked.footer") + " ") | dim})) |
+                     size(WIDTH, GREATER_THAN, 48) | clear_under | center});
   if (modal_ == Modal::None) return screen;
   return dbox({std::move(screen), render_modal()});
 }
@@ -522,6 +538,7 @@ bool App::on_event(const Event& event) {
     if (screen_) screen_->ExitLoopClosure()();
     return true;
   }
+  if (blocked_) return true;
 
   switch (modal_) {
     case Modal::Prompt: return on_prompt_event(event);

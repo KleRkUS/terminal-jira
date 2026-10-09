@@ -60,6 +60,11 @@ const char kStringsEn[] = R"json(
       "footer": "y to confirm · Esc to cancel"
     },
 
+    "blocked": {
+      "title": "Working",
+      "footer": "keys are paused until this finishes · Ctrl-C quits"
+    },
+
     "editor": {
       "cannotWrite": "Cannot write {path}",
       "failed": "Editor exited with status {code}; nothing was saved.",
@@ -139,6 +144,12 @@ const char kStringsEn[] = R"json(
       "more": "more issues available — press m or scroll to the bottom"
     },
 
+    "visual": {
+      "bar": "VISUAL · {count} selected · s status · a assignee · v or Esc leaves",
+      "on": "Visual mode: move to select a run of tickets.",
+      "off": "Left visual mode."
+    },
+
     "board": {
       "loading": "loading boards…",
       "none": "this project has no boards",
@@ -202,6 +213,7 @@ const char kStringsEn[] = R"json(
       "move": "move down / up",
       "jump": "jump / half page",
       "more": "load more issues",
+      "visual": "select several tickets",
       "open": "open the ticket",
       "create": "new ticket",
       "editSummary": "edit the summary",
@@ -317,6 +329,31 @@ const char kStringsEn[] = R"json(
       "sending": "Moving {key}…",
       "action": "Move {key} to {status}",
       "done": "{key} is now {status}"
+    },
+
+    // Several tickets at once, one request each. {done} counts the tickets
+    // already answered, so the first message says 0.
+    "bulk": {
+      "nothingChanged": "Nothing was changed.",
+      "transition": {
+        "loading": "Reading where {key} can move · {done} of {total} done",
+        "load": "Load the available statuses of {count} tickets",
+        "none": "No status is reachable from all {count} tickets.",
+        "pick": "Move {count} tickets",
+        "sending": "Moving {key} to {status} · {done} of {total} done",
+        "action": "Move {count} tickets to {status}",
+        "done": "{count} tickets are now {value}",
+        "partial": "{done} of {total} tickets moved to {value}; {failed} failed"
+      },
+      "assign": {
+        "loading": "Reading who can take {key} · {done} of {total} done",
+        "load": "Load assignable users for {count} tickets",
+        "pick": "Assign {count} tickets",
+        "sending": "Assigning {key} to {assignee} · {done} of {total} done",
+        "action": "Assign {count} tickets to {assignee}",
+        "done": "{count} tickets assigned to {value}",
+        "partial": "{done} of {total} tickets assigned to {value}; {failed} failed"
+      }
     },
 
     "type": {

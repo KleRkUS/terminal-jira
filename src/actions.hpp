@@ -25,6 +25,14 @@ void edit_description(ui::Context& ctx, const Life& life, const Issue& issue, Do
 void reassign(ui::Context& ctx, const Life& life, const Issue& issue, Done on_changed);
 void change_status(ui::Context& ctx, const Life& life, const Issue& issue, Done on_changed);
 
+// The same two changes for several tickets at once. There is no bulk endpoint
+// that both Jira Cloud and Server offer, so it is one request per ticket, sent
+// in turn with the interface blocked until the last answer is in. Each ticket is
+// asked first what it allows, and only the choices every ticket shares are
+// offered. A ticket that fails is reported and the rest still go through.
+void change_status_all(ui::Context& ctx, const Life& life, std::vector<std::string> keys, Done on_changed);
+void reassign_all(ui::Context& ctx, const Life& life, std::vector<std::string> keys, Done on_changed);
+
 // The remaining editable fields of a ticket. Each opens a picker filled from
 // Jira; `project_key` is needed where the choices belong to the project rather
 // than to the issue.

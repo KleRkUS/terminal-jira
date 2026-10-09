@@ -52,6 +52,16 @@ check() {
   fi
 }
 
+refute() {
+  local label=$1 pattern=$2 file=$3
+  if grep -qF -- "$pattern" "$file"; then
+    echo "  FAIL  $label (did not expect: $pattern)"
+    failures=$((failures + 1))
+  else
+    echo "  ok    $label"
+  fi
+}
+
 # Replaces the running stub with one started differently, for the scenarios that
 # need the server to behave another way.
 start_stub() {
@@ -126,6 +136,34 @@ check "transition was posted"             '/transitions {"transition":{"id":"11"
   2:'\r' 2:n 2:'j\r' 1.5:'Investigate flaky test' 1.5:'\r' 2.5:'\x03' > /dev/null
 check "issue was created with the chosen type" '{"id":"10002"}' "$work/writes.log"
 check "issue was created with the summary"     'Investigate flaky test' "$work/writes.log"
+
+# Writes take a second each here, so the run is still going when q and j
+# arrive; both must be swallowed rather than leave the window or move the rows.
+echo "visual mode: v selects a run of tickets, s moves them all"
+start_stub --slow-writes 1
+: > "$work/writes.log"
+"$here/drive.sh" "$binary" "$work/visual.raw" \
+  2:'\r' 2:v 0.5:j 0.5:j 1:s 1.5:' ' 0.8:q 0.3:j 0.3:q 4:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/visual.raw" 99 > "$work/visual.txt"
+python3 "$here/replay.py" "$work/visual.raw" 1 > "$work/visual-last.txt"
+check  "the selection is counted"             "VISUAL · 3 selected"                  "$work/visual.txt"
+check  "one picker for all of them"           "Move 3 tickets"                       "$work/visual.txt"
+refute "it offers only statuses all share"    "Reopened"                             "$work/visual.txt"
+check  "the overlay counts through them"      "Moving ENG-2 to In Progress · 1 of 3" "$work/visual.txt"
+check  "each ticket is moved"                 'ENG-3/transitions {"transition":{"id":"11"}}' "$work/writes.log"
+check  "and the status bar says so"           "3 tickets are now In Progress"        "$work/visual-last.txt"
+check  "keys pressed meanwhile were ignored"  "Projects › ENG"                       "$work/visual-last.txt"
+refute "and the selection ends with the run"  "VISUAL ·"                             "$work/visual-last.txt"
+
+echo "visual mode: a assigns every selected ticket"
+start_stub
+: > "$work/writes.log"
+"$here/drive.sh" "$binary" "$work/visual-assign.raw" \
+  2:'\r' 2:v 0.5:j 1:a 1.5:j 0.5:' ' 2.5:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/visual-assign.raw" 1 > "$work/visual-assign.txt"
+check "the first is assigned"  'PUT /rest/api/3/issue/ENG-1/assignee {"accountId":"a1"}' "$work/writes.log"
+check "and so is the second"   'PUT /rest/api/3/issue/ENG-2/assignee {"accountId":"a1"}' "$work/writes.log"
+check "the status bar says so" "2 tickets assigned to Ada Lovelace" "$work/visual-assign.txt"
 
 # A card that matches no column used to be dropped, so a board full of issues
 # rendered as empty columns. Both ways that can happen are checked here.

@@ -248,6 +248,7 @@ void ProjectWindow::reload(bool announce) {
 
 void ProjectWindow::select_tab(int tab) {
   tab_ = tab;
+  visual_ = false;
   filter_.clear();
   on_focus();
 }
@@ -323,6 +324,20 @@ const Issue* ProjectWindow::current_issue() const {
   return rows[static_cast<size_t>(index)];
 }
 
+bool ProjectWindow::in_visual_range(int row) const {
+  if (!visual_ || tab_ == TabBoard) return false;
+  const int cursor = table(static_cast<Tab>(tab_)).selected;
+  return row >= std::min(visual_anchor_, cursor) && row <= std::max(visual_anchor_, cursor);
+}
+
+std::vector<const Issue*> ProjectWindow::visual_rows() const {
+  std::vector<const Issue*> out;
+  const auto rows = visible_rows();
+  for (int i = 0; i < static_cast<int>(rows.size()); ++i)
+    if (in_visual_range(i)) out.push_back(rows[static_cast<size_t>(i)]);
+  return out;
+}
+
 void ProjectWindow::open_current() {
   if (const Issue* issue = current_issue())
     ctx_.push_window(std::make_unique<TicketWindow>(ctx_, project_, *issue));
@@ -354,6 +369,7 @@ Element ProjectWindow::render_table() {
         text(" "),
         text(ui::relative_time(issue.updated)) | dim | size(WIDTH, EQUAL, 10),
     });
+    if (in_visual_range(i)) line = line | bgcolor(Color::Blue);
     if (i == t.selected) line = line | inverted | focus;
     lines.push_back(line);
   }
@@ -488,6 +504,9 @@ Element ProjectWindow::render() {
   };
   if (filter_.active || !filter_.query.empty())
     body.push_back(hbox({text(" /"), text(filter_.query) | bold}) | color(Color::Yellow));
+  if (visual_ && tab_ != TabBoard)
+    body.push_back(text(" " + tr("project.visual.bar", {{"count", std::to_string(visual_rows().size())}})) |
+                   bold | color(Color::Blue));
 
   return ui::panel(tr("project.title", {{"key", project_.key}, {"name", project_.name}}),
                    vbox(std::move(body)), true);
@@ -506,6 +525,12 @@ bool ProjectWindow::on_table_event(const Event& event) {
   }
   if (event == Event::Character('m')) {
     load_table(static_cast<Tab>(tab_), true);
+    return true;
+  }
+  if (event == Event::Character('v')) {
+    visual_ = !visual_;
+    visual_anchor_ = t.selected;
+    ctx_.set_status(tr(visual_ ? "project.visual.on" : "project.visual.off"));
     return true;
   }
   return false;
@@ -551,6 +576,13 @@ bool ProjectWindow::on_board_event(const Event& event) {
 bool ProjectWindow::on_event(const Event& event) {
   if (filter_.on_event(event)) {
     table(static_cast<Tab>(tab_)).selected = 0;
+    visual_ = false;
+    return true;
+  }
+  // Before the window's own back key: Esc or q leaves the selection first.
+  if (visual_ && ui::is_back(event)) {
+    visual_ = false;
+    ctx_.set_status(tr("project.visual.off"));
     return true;
   }
 
@@ -571,6 +603,22 @@ bool ProjectWindow::on_event(const Event& event) {
   }
   if (event == Event::Character('n')) {
     actions::create_issue(ctx_, life, project_.key, [this](const std::string&) { reload(false); });
+    return true;
+  }
+
+  // The new order puts the changed tickets elsewhere, so the selection ends
+  // with the refresh; a cancelled dialog leaves it in place.
+  if (visual_ && tab_ != TabBoard && (event == Event::Character('s') || event == Event::Character('a'))) {
+    std::vector<std::string> keys;
+    for (const Issue* row : visual_rows()) keys.push_back(row->key);
+    auto done = ui::guarded(life, [this] {
+      visual_ = false;
+      reload(false);
+    });
+    if (event == Event::Character('s'))
+      actions::change_status_all(ctx_, life, std::move(keys), done);
+    else
+      actions::reassign_all(ctx_, life, std::move(keys), done);
     return true;
   }
 
@@ -601,6 +649,7 @@ std::vector<ui::KeyHelp> ProjectWindow::keys() const {
     out.push_back({"j / k", tr("project.keys.move")});
     out.push_back({"g / G, d / u", tr("project.keys.jump")});
     out.push_back({"m", tr("project.keys.more")});
+    out.push_back({"v", tr("project.keys.visual")});
   }
   out.insert(out.end(), {
                             {"Enter / Space", tr("project.keys.open")},

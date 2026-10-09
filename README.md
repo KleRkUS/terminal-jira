@@ -221,6 +221,15 @@ From any tab you can work on the highlighted issue without opening it:
 Only the statuses your workflow actually allows are offered, and only people who
 can be assigned to that issue appear in the list.
 
+To change several tickets at once on the Mine, Open or All tab, press `v` and
+move with `j` / `k`: every row between where you pressed `v` and the cursor is
+selected, and the bar under the list counts them. `s` and `a` then apply to the
+whole selection. The picker offers only the statuses every selected ticket can
+move to, and only the people who can be assigned to all of them. Jira takes the
+change one ticket at a time, so the screen is paused with a progress window
+until the last one is done; if some are refused, the rest still go through and
+a popup lists the ones that failed. `v`, `Esc` or `q` leaves the selection.
+
 ### Reading a ticket
 
 `Enter` opens the highlighted issue: its fields, the full description, and the

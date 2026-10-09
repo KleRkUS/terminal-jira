@@ -39,6 +39,80 @@ std::string preview(const std::string& text) {
   return out;
 }
 
+// What came of sending one request per ticket. A ticket that fails does not
+// stop the others: what was already sent cannot be taken back, and stopping
+// would only leave the rest undone for a reason nobody chose.
+template <typename T>
+struct Batch {
+  std::vector<std::pair<std::string, T>> done;              // key, Jira's answer
+  std::vector<std::pair<std::string, std::string>> failed;  // key, what went wrong
+};
+
+// Runs `each(key)` for every key, one after another on the worker thread, with
+// the interface blocked. `describe(key, index)` is the overlay's text while
+// that ticket is in flight; it is built here, so the worker never touches the
+// catalog. `finished` runs on the UI thread once the last one is back.
+template <typename Each, typename Describe, typename Finished>
+void run_batch(ui::Context& ctx, const Life& life, std::vector<std::string> keys, Describe describe, Each each,
+               Finished finished) {
+  using T = std::invoke_result_t<Each, const std::string&>;
+  std::vector<std::string> messages;
+  for (size_t i = 0; i < keys.size(); ++i) messages.push_back(describe(keys[i], i));
+
+  ctx.block(messages.front());
+  ctx.job_started();
+  ctx.submit([&ctx, life, keys = std::move(keys), messages = std::move(messages), each = std::move(each),
+              finished = std::move(finished)]() mutable {
+    auto batch = std::make_shared<Batch<T>>();
+    for (size_t i = 0; i < keys.size(); ++i) {
+      ctx.post([&ctx, message = messages[i]] { ctx.block(message); });
+      try {
+        batch->done.emplace_back(keys[i], each(keys[i]));
+      } catch (const JiraError& ex) {
+        batch->failed.emplace_back(keys[i], ui::describe_failure(ex.status, ex.body));
+      } catch (const std::exception& ex) {
+        batch->failed.emplace_back(keys[i], ex.what());
+      }
+    }
+    ctx.post([&ctx, life, batch, finished = std::move(finished)]() mutable {
+      ctx.job_finished();
+      ctx.unblock();
+      if (!life.expired()) finished(std::move(*batch));
+    });
+  });
+}
+
+// One popup for the whole run rather than one per ticket, which for a long
+// selection would bury the screen.
+template <typename T>
+void report_failures(ui::Context& ctx, const std::string& action, const Batch<T>& batch) {
+  if (batch.failed.empty()) return;
+  std::string detail;
+  for (const auto& [key, why] : batch.failed) detail += (detail.empty() ? "" : "  ·  ") + key + ": " + why;
+  ctx.report_error(action, detail);
+}
+
+std::string destination(const Transition& t) { return t.to_status.empty() ? t.name : t.to_status; }
+
+// Reports how a change to several tickets went, and refreshes if anything
+// changed. `done_key` takes {count}; `partial_key` takes {done}, {total} and
+// {failed}; both take {value}, the status or assignee.
+template <typename T>
+void finish_batch(ui::Context& ctx, const Batch<T>& batch, const std::string& action, const char* done_key,
+                  const char* partial_key, const std::string& value, const Done& on_changed) {
+  const size_t total = batch.done.size() + batch.failed.size();
+  report_failures(ctx, action, batch);
+  if (batch.failed.empty())
+    ctx.set_status(tr(done_key, {{"count", std::to_string(total)}, {"value", value}}));
+  else
+    ctx.set_status(tr(partial_key, {{"done", std::to_string(batch.done.size())},
+                                    {"total", std::to_string(total)},
+                                    {"failed", std::to_string(batch.failed.size())},
+                                    {"value", value}}),
+                   true);
+  if (!batch.done.empty() && on_changed) on_changed();
+}
+
 // "perf, tui" -> {"perf", "tui"}. Jira rejects a label containing a space, so
 // trimming is all that is needed; it says so itself if one is still invalid.
 std::vector<std::string> split_labels(const std::string& text) {
@@ -191,6 +265,125 @@ void change_status(ui::Context& ctx, const Life& life, const Issue& issue, Done 
               [&ctx, key, status, on_changed](bool) {
                 ctx.set_status(tr("actions.transition.done", {{"key", key}, {"status", status}}));
                 if (on_changed) on_changed();
+              });
+        });
+      });
+}
+
+void change_status_all(ui::Context& ctx, const Life& life, std::vector<std::string> keys, Done on_changed) {
+  if (keys.empty()) return;
+  const std::string total = std::to_string(keys.size());
+  run_batch(
+      ctx, life, keys,
+      [total](const std::string& key, size_t i) {
+        return tr("actions.bulk.transition.loading", {{"key", key}, {"done", std::to_string(i)}, {"total", total}});
+      },
+      [&ctx](const std::string& key) { return ctx.jira().transitions(key); },
+      [&ctx, life, total, on_changed = std::move(on_changed)](Batch<std::vector<Transition>> loaded) {
+        // Without every ticket's answer there is no telling which statuses they
+        // share, so a failure here stops before anything is changed.
+        if (!loaded.failed.empty()) {
+          report_failures(ctx, tr("actions.bulk.transition.load", {{"count", total}}), loaded);
+          return ctx.set_status(tr("actions.bulk.nothingChanged"), true);
+        }
+
+        // Each ticket's workflow decides where it can go, so only the statuses
+        // every one of them can reach are offered.
+        std::vector<std::string> statuses;
+        for (const Transition& t : loaded.done.front().second) {
+          const std::string status = destination(t);
+          if (std::find(statuses.begin(), statuses.end(), status) != statuses.end()) continue;
+          const bool everywhere = std::all_of(loaded.done.begin(), loaded.done.end(), [&](const auto& entry) {
+            return std::any_of(entry.second.begin(), entry.second.end(),
+                               [&](const Transition& other) { return destination(other) == status; });
+          });
+          if (everywhere) statuses.push_back(status);
+        }
+        if (statuses.empty()) return ctx.set_status(tr("actions.bulk.transition.none", {{"count", total}}), true);
+
+        ctx.choose(tr("actions.bulk.transition.pick", {{"count", total}}), statuses,
+                   [&ctx, life, total, statuses, loaded, on_changed](int pick) {
+          const std::string status = statuses[static_cast<size_t>(pick)];
+          // By each ticket's own transition id: two workflows can reach the same
+          // status through differently numbered transitions.
+          std::vector<std::string> keys;
+          std::vector<std::pair<std::string, std::string>> moves;
+          for (const auto& [key, transitions] : loaded.done)
+            for (const Transition& t : transitions)
+              if (destination(t) == status) {
+                keys.push_back(key);
+                moves.emplace_back(key, t.id);
+                break;
+              }
+          run_batch(
+              ctx, life, keys,
+              [total, status](const std::string& key, size_t i) {
+                return tr("actions.bulk.transition.sending",
+                          {{"key", key}, {"status", status}, {"done", std::to_string(i)}, {"total", total}});
+              },
+              [&ctx, moves](const std::string& key) {
+                const auto move = std::find_if(moves.begin(), moves.end(), [&](const auto& m) { return m.first == key; });
+                ctx.jira().transition(key, move->second);
+                return true;
+              },
+              [&ctx, total, status, on_changed](Batch<bool> sent) {
+                finish_batch(ctx, sent, tr("actions.bulk.transition.action", {{"count", total}, {"status", status}}),
+                             "actions.bulk.transition.done", "actions.bulk.transition.partial", status, on_changed);
+              });
+        });
+      });
+}
+
+void reassign_all(ui::Context& ctx, const Life& life, std::vector<std::string> keys, Done on_changed) {
+  if (keys.empty()) return;
+  const std::string total = std::to_string(keys.size());
+  run_batch(
+      ctx, life, keys,
+      [total](const std::string& key, size_t i) {
+        return tr("actions.bulk.assign.loading", {{"key", key}, {"done", std::to_string(i)}, {"total", total}});
+      },
+      [&ctx](const std::string& key) { return ctx.jira().assignable_users(key); },
+      [&ctx, life, total, on_changed = std::move(on_changed)](Batch<std::vector<User>> loaded) {
+        if (!loaded.failed.empty()) {
+          report_failures(ctx, tr("actions.bulk.assign.load", {{"count", total}}), loaded);
+          return ctx.set_status(tr("actions.bulk.nothingChanged"), true);
+        }
+
+        // Who may hold a ticket can differ between tickets, so only the people
+        // Jira offers for every one of them are listed.
+        std::vector<User> users;
+        for (const User& user : loaded.done.front().second) {
+          const bool everywhere = std::all_of(loaded.done.begin(), loaded.done.end(), [&](const auto& entry) {
+            return std::any_of(entry.second.begin(), entry.second.end(),
+                               [&](const User& other) { return other.account_id == user.account_id; });
+          });
+          if (everywhere) users.push_back(user);
+        }
+
+        std::vector<std::string> names{tr("actions.assign.unassignOption")};
+        for (const User& u : users) names.push_back(u.display_name);
+        std::vector<std::string> keys;
+        for (const auto& entry : loaded.done) keys.push_back(entry.first);
+
+        ctx.choose(tr("actions.bulk.assign.pick", {{"count", total}}), names,
+                   [&ctx, life, total, users, keys, on_changed](int pick) {
+          const bool unassign = pick == 0;
+          const std::string account = unassign ? "" : users[static_cast<size_t>(pick - 1)].account_id;
+          const std::string label =
+              unassign ? tr("actions.assign.nobody") : users[static_cast<size_t>(pick - 1)].display_name;
+          run_batch(
+              ctx, life, keys,
+              [total, label](const std::string& key, size_t i) {
+                return tr("actions.bulk.assign.sending",
+                          {{"key", key}, {"assignee", label}, {"done", std::to_string(i)}, {"total", total}});
+              },
+              [&ctx, account](const std::string& key) {
+                ctx.jira().assign(key, account);
+                return true;
+              },
+              [&ctx, total, label, on_changed](Batch<bool> sent) {
+                finish_batch(ctx, sent, tr("actions.bulk.assign.action", {{"count", total}, {"assignee", label}}),
+                             "actions.bulk.assign.done", "actions.bulk.assign.partial", label, on_changed);
               });
         });
       });

@@ -78,6 +78,13 @@ pool, because `JiraClient` owns one curl handle and because serialising requests
 is also politer to Jira's rate limiter. `App::post` hands a closure back to the
 loop via `ScreenInteractive::Post`.
 
+"Never blocks" is about the thread, not the keyboard. A change sent ticket by
+ticket (visual mode's `s` and `a`) calls `Context::block`, which keeps drawing
+but swallows every key except Ctrl-C and shows a progress window until
+`unblock`. The loop is one worker job that posts a progress message per ticket;
+a moved cursor or a closed window halfway through would leave the user unsure
+which tickets were changed. See `run_batch` in `actions.cpp`.
+
 `ui::async` wraps the pattern and handles the parts that are easy to get wrong:
 
 - a `JiraError` from `work()` becomes an error popup headed by the `action`
