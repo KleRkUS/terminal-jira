@@ -9,6 +9,7 @@ records what the client sent so tests can assert on it:
 
     auth.log    one line per request: method and Authorization header
     writes.log  one line per mutation: method, path and body
+    search.log  one line per issue search: the JQL
 
 Usage:
     python3 tests/fake_jira.py [--port 8723] [--log-dir .]
@@ -76,7 +77,8 @@ def issue(n):
             "assignee": None if n % 4 == 0 else {"displayName": "Ada Lovelace"},
             "reporter": {"displayName": "Grace Hopper"},
             "updated": "2026-10-05T09:00:00.000+0400",
-            "parent": None,
+            # Two parents shared by the listed issues; every third has none.
+            "parent": [None, {"key": "ENG-50"}, {"key": "ENG-60"}][n % 3],
             "labels": ["perf", "tui"],
             "description": adf(f"Details for issue {n}."),
         },
@@ -160,6 +162,12 @@ class Handler(BaseHTTPRequestHandler):
                 "created": "2026-10-05T10:00:00.000+0400",
                 "body": adf("Looks good to me."),
             }]})
+        if re.search(r"/project/[A-Z]+/statuses", path):
+            # Grouped by issue type, with the overlap a real project has.
+            return self.reply([
+                {"name": "Task", "statuses": [{"id": sid, "name": name} for sid, name in STATUSES]},
+                {"name": "Bug", "statuses": [{"id": "1", "name": "To Do"}, {"id": "5", "name": "Done"}]},
+            ])
         if path.endswith("/rest/api/3/priority"):
             return self.reply(PRIORITIES)
         if "/issuetypes" in path:
@@ -176,6 +184,15 @@ class Handler(BaseHTTPRequestHandler):
         log("auth.log", f"{self.command} {self.headers.get('Authorization')}")
         body = self.read_body()
         if "/search/jql" in self.path:
+            jql = json.loads(body or "{}").get("jql", "")
+            log("search.log", jql)
+            wanted = re.search(r"key in \(([^)]*)\)", jql)
+            if wanted:
+                numbers = [int(n) for n in re.findall(r"-(\d+)", wanted.group(1))]
+                # Jira refuses the whole query over one key that does not exist.
+                if any(n >= 900 for n in numbers):
+                    return self.fail(400)
+                return self.reply({"issues": [issue(n) for n in numbers]})
             # One page only: no nextPageToken means this is the last page.
             return self.reply({"issues": [issue(n) for n in range(1, 9)]})
         log("writes.log", f"POST {self.path} {body}")

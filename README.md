@@ -198,7 +198,25 @@ Four tabs, switched with `[` and `]` or jumped to with `1`–`4`:
 | **Board** | the project's agile board, as columns of cards |
 
 The first three are tables that load more as you scroll; `m` fetches the next page
-immediately. The Board tab shows the real columns from your board's configuration,
+immediately.
+
+`t` sorts those lists by ID, name, status, assignee, parent or last update;
+choosing the field that is already active reverses it. `f` filters them:
+
+- **Status** and **Assignee** open a checklist of what Jira offers for the
+  project — tick as many as you like. Assignee also has *Unassigned*.
+- **Parent** lists the parents of the tickets loaded so far on Mine, Open and
+  All, with their names, plus any you have already ticked. A parent whose
+  children have not been loaded yet appears once you scroll to them or press `m`.
+- **ID** takes keys separated by commas; a bare number means this project, so
+  `12, 40` shows ENG-12 and ENG-40.
+- **Name** shows tickets whose name contains the words you type.
+
+An empty answer removes that filter, and *Clear every filter* removes them all.
+Both the sort and the filters are applied by Jira, so they cover the whole list,
+not only the page already loaded, and they stay in place as you switch between
+Mine, Open and All. The line above the list always says what is active. `/` still
+narrows the rows on screen as you type. The Board tab shows the real columns from your board's configuration,
 one card per issue with its key, summary, type, priority, assignee initials and
 age; the columns always share the width equally, however long the summaries in
 them are. `h` and `l` move between columns, `b` switches to another board, and `c`

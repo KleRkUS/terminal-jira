@@ -165,6 +165,39 @@ check "the first is assigned"  'PUT /rest/api/3/issue/ENG-1/assignee {"accountId
 check "and so is the second"   'PUT /rest/api/3/issue/ENG-2/assignee {"accountId":"a1"}' "$work/writes.log"
 check "the status bar says so" "2 tickets assigned to Ada Lovelace" "$work/visual-assign.txt"
 
+# Sorting and filtering go into the JQL, so a list loaded a page at a time is
+# still in the right order; the search log is what proves it.
+echo "lists: t sorts and f filters, both through the JQL"
+: > "$work/search.log"
+"$here/drive.sh" "$binary" "$work/query.raw" \
+  2:'\r' 1.5:3 1.5:t 1:jj 0.5:' ' 1.5:t 1:jj 0.5:' ' \
+  1.5:f 1:' ' 1.5:jj 0.5:' ' 0.5:'\r' \
+  1.5:f 1:jj 0.5:' ' 1.5:' ' 0.5:'\r' \
+  1.5:f 1:jjj 0.5:' ' 1:'12, ops-3' 0.5:'\r' \
+  1.5:f 1:jjjj 0.5:' ' 1:widget 0.5:'\r' 2:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/query.raw" 99 > "$work/query.txt"
+python3 "$here/replay.py" "$work/query.raw" 1 > "$work/query-last.txt"
+check "sorting asks Jira for that order"     'ORDER BY status ASC'                   "$work/search.log"
+check "the same field again reverses it"     'ORDER BY status DESC'                  "$work/search.log"
+check "statuses come from the project, once" 'In Progress'                           "$work/query.txt"
+check "a status filter"                      'status in ("Done")'                    "$work/search.log"
+check  "parents are the loaded tickets' own"  '[ ] ENG-50  Make widget 50 faster'     "$work/query.txt"
+refute "not every ticket in the project"      '[ ] ENG-1  Make widget 1'              "$work/query.txt"
+check  "a parent filter"                      'parent in ("ENG-50")'                  "$work/search.log"
+check "IDs, with the project filled in"      'key in ("ENG-12", "OPS-3")'            "$work/search.log"
+check "a name filter"                        'summary ~ "widget"'                    "$work/search.log"
+check "the list says what it is showing"     'f filter · Status Done · Parent ENG-50' "$work/query-last.txt"
+check "and how it is sorted"                 't sort · Status ↓'                     "$work/query-last.txt"
+
+echo "lists: clearing the filters keeps the sort"
+: > "$work/search.log"
+"$here/drive.sh" "$binary" "$work/clear.raw" \
+  2:'\r' 1.5:3 1.5:t 0.5:' ' 1.5:f 1:' ' 1.5:' ' 0.5:'\r' 1.5:f 1:jjjjj 0.5:' ' 2:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/clear.raw" 1 > "$work/clear.txt"
+check "the last search has no filter left"   'project = "ENG" ORDER BY key ASC'      "$work/search.log"
+check  "the sort is still shown"             't sort · ID ↑'                         "$work/clear.txt"
+refute "and no filter is"                    'f filter ·'                            "$work/clear.txt"
+
 # A card that matches no column used to be dropped, so a board full of issues
 # rendered as empty columns. Both ways that can happen are checked here.
 echo "board mapping: a card is never dropped for want of a column"

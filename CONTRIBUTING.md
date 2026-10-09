@@ -82,7 +82,7 @@ Three tests:
 - **`smoke`** — starts a stub Jira server, drives the real binary through all
   three windows under a pseudo-terminal, and asserts on both the frames it drew
   and the requests it sent, including the error popups raised by rejected
-  requests. Fifty-four checks. Registered only for the `linux` platform, and
+  requests. Sixty-six checks. Registered only for the `linux` platform, and
   only if `python3` and `script` are available.
 
 Run the end-to-end test directly for readable output:
