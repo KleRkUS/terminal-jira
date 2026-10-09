@@ -9,6 +9,7 @@ records what the client sent so tests can assert on it:
 
     auth.log    one line per request: method and Authorization header
     writes.log  one line per mutation: method, path and body
+    search.log  one line per issue search: the JQL
 
 Usage:
     python3 tests/fake_jira.py [--port 8723] [--log-dir .]
@@ -17,6 +18,7 @@ import argparse
 import json
 import os
 import re
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 PROJECTS = [
@@ -42,6 +44,7 @@ BOARDS = [
 LOG_DIR = "."
 FAIL = set()  # any of {"reads", "writes"}, set by --fail
 BOARD = "normal"  # see --board
+SLOW_WRITES = 0.0  # seconds each write takes, see --slow-writes
 
 
 def log(name, line):
@@ -74,7 +77,8 @@ def issue(n):
             "assignee": None if n % 4 == 0 else {"displayName": "Ada Lovelace"},
             "reporter": {"displayName": "Grace Hopper"},
             "updated": "2026-10-05T09:00:00.000+0400",
-            "parent": None,
+            # Two parents shared by the listed issues; every third has none.
+            "parent": [None, {"key": "ENG-50"}, {"key": "ENG-60"}][n % 3],
             "labels": ["perf", "tui"],
             "description": adf(f"Details for issue {n}."),
         },
@@ -137,10 +141,16 @@ class Handler(BaseHTTPRequestHandler):
             issues = [issue(n) for n in range(1, count + 1)]
             return self.reply({"issues": issues, "total": len(issues), "startAt": 0})
         if "/transitions" in path:
-            return self.reply({"transitions": [
+            transitions = [
                 {"id": "11", "name": "Start", "to": {"name": "In Progress"}},
                 {"id": "21", "name": "Finish", "to": {"name": "Done"}},
-            ]})
+            ]
+            # Every third issue has a step the others lack, as tickets on
+            # different workflows do, so a choice for several tickets at once
+            # has to be one they all share.
+            if int(re.search(r"-(\d+)/transitions", path).group(1)) % 3 == 0:
+                transitions.append({"id": "31", "name": "Reopen", "to": {"name": "Reopened"}})
+            return self.reply({"transitions": transitions})
         if "/assignable/search" in path:
             return self.reply([
                 {"accountId": "a1", "displayName": "Ada Lovelace"},
@@ -152,6 +162,12 @@ class Handler(BaseHTTPRequestHandler):
                 "created": "2026-10-05T10:00:00.000+0400",
                 "body": adf("Looks good to me."),
             }]})
+        if re.search(r"/project/[A-Z]+/statuses", path):
+            # Grouped by issue type, with the overlap a real project has.
+            return self.reply([
+                {"name": "Task", "statuses": [{"id": sid, "name": name} for sid, name in STATUSES]},
+                {"name": "Bug", "statuses": [{"id": "1", "name": "To Do"}, {"id": "5", "name": "Done"}]},
+            ])
         if path.endswith("/rest/api/3/priority"):
             return self.reply(PRIORITIES)
         if "/issuetypes" in path:
@@ -168,9 +184,19 @@ class Handler(BaseHTTPRequestHandler):
         log("auth.log", f"{self.command} {self.headers.get('Authorization')}")
         body = self.read_body()
         if "/search/jql" in self.path:
+            jql = json.loads(body or "{}").get("jql", "")
+            log("search.log", jql)
+            wanted = re.search(r"key in \(([^)]*)\)", jql)
+            if wanted:
+                numbers = [int(n) for n in re.findall(r"-(\d+)", wanted.group(1))]
+                # Jira refuses the whole query over one key that does not exist.
+                if any(n >= 900 for n in numbers):
+                    return self.fail(400)
+                return self.reply({"issues": [issue(n) for n in numbers]})
             # One page only: no nextPageToken means this is the last page.
             return self.reply({"issues": [issue(n) for n in range(1, 9)]})
         log("writes.log", f"POST {self.path} {body}")
+        time.sleep(SLOW_WRITES)
         if self.should_fail("writes"):
             return self.fail()
         if self.path.endswith("/rest/api/3/issue"):
@@ -180,13 +206,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         log("auth.log", f"{self.command} {self.headers.get('Authorization')}")
         log("writes.log", f"PUT {self.path} {self.read_body()}")
+        time.sleep(SLOW_WRITES)
         if self.should_fail("writes"):
             return self.fail()
         self.reply({})
 
 
 def main():
-    global LOG_DIR, FAIL, BOARD
+    global LOG_DIR, FAIL, BOARD, SLOW_WRITES
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8723)
     parser.add_argument("--log-dir", default=".")
@@ -198,10 +225,14 @@ def main():
                         help="how the board columns relate to the issue statuses: "
                              "matching ids, ids that match nothing, issues in a "
                              "status the columns leave out, or no issues at all")
+    parser.add_argument("--slow-writes", type=float, default=0.0,
+                        help="seconds each write takes, so a run of them stays "
+                             "on screen long enough to press keys into it")
     args = parser.parse_args()
     LOG_DIR = args.log_dir
     FAIL = {part for part in args.fail.split(",") if part}
     BOARD = args.board
+    SLOW_WRITES = args.slow_writes
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"fake Jira listening on http://127.0.0.1:{args.port}"

@@ -4,6 +4,8 @@
 #include "windows/project_window.hpp"
 
 #include <algorithm>
+#include <cctype>
+#include <iterator>
 #include <memory>
 #include <utility>
 
@@ -26,6 +28,23 @@ std::string jql_quote(const std::string& value) {
     out += c;
   }
   return out + "\"";
+}
+
+std::string jql_list(const std::vector<std::string>& values) {
+  std::string out;
+  for (const std::string& value : values) out += (out.empty() ? "" : ", ") + jql_quote(value);
+  return "(" + out + ")";
+}
+
+// Picker order, which is also SortField order.
+constexpr const char* kSortJql[] = {"key", "summary", "status", "assignee", "parent", "updated"};
+constexpr const char* kSortNames[] = {"project.sort.key",      "project.sort.summary", "project.sort.status",
+                                      "project.sort.assignee", "project.sort.parent",  "project.sort.updated"};
+
+std::string join(const std::vector<std::string>& values, const std::string& glue) {
+  std::string out;
+  for (const std::string& value : values) out += (out.empty() ? "" : glue) + value;
+  return out;
 }
 
 }  // namespace
@@ -64,16 +83,33 @@ std::string ProjectWindow::jql_for(Tab tab) const {
   std::string jql = "project = " + jql_quote(project_.key);
   if (tab == TabMine) jql += " AND assignee = currentUser() AND statusCategory != Done";
   if (tab == TabOpen) jql += " AND statusCategory != Done";
-  return jql + " ORDER BY updated DESC";
+
+  if (!query_.statuses.empty()) jql += " AND status in " + jql_list(query_.statuses);
+  if (!query_.assignees.empty() || query_.unassigned) {
+    std::vector<std::string> ids, either;
+    for (const User& user : query_.assignees) ids.push_back(user.account_id);
+    if (!ids.empty()) either.push_back("assignee in " + jql_list(ids));
+    if (query_.unassigned) either.push_back("assignee is EMPTY");
+    jql += " AND (" + join(either, " OR ") + ")";
+  }
+  if (!query_.parents.empty()) jql += " AND parent in " + jql_list(query_.parents);
+  if (!query_.keys.empty()) jql += " AND key in " + jql_list(query_.keys);
+  if (!query_.name.empty()) jql += " AND summary ~ " + jql_quote(query_.name);
+
+  // A single sort field on purpose: Jira has ignored the direction of any field
+  // after `parent` in an ORDER BY.
+  return jql + " ORDER BY " + kSortJql[static_cast<int>(query_.sort)] + (query_.descending ? " DESC" : " ASC");
 }
 
 void ProjectWindow::load_table(Tab tab, bool append, bool announce) {
   Table& t = table(tab);
-  if (t.loading) return;
-  if (append && t.is_last) return;
+  const int version = query_version_;
+  if (t.loading && t.query_version == version) return;
+  if (append && (t.is_last || t.query_version != version)) return;
 
   t.loading = true;
   t.loaded = true;
+  t.query_version = version;
   const std::string jql = jql_for(tab);
   const std::string token = append ? t.next_token : std::string();
   if (announce)
@@ -83,7 +119,8 @@ void ProjectWindow::load_table(Tab tab, bool append, bool announce) {
   ui::async(
       ctx_, life, tr("project.action.loadTab", {{"tab", tab_name(tab)}, {"project", project_.key}}),
       [this, jql, token] { return ctx_.jira().search(jql, kPageSize, token); },
-      [this, tab, append, announce](IssuePage page) {
+      [this, tab, append, announce, version](IssuePage page) {
+        if (version != query_version_) return;  // asked for under a query since replaced
         Table& t = table(tab);
         t.loading = false;
         if (append)
@@ -99,7 +136,9 @@ void ProjectWindow::load_table(Tab tab, bool append, bool announce) {
                               {"tab", tab_name(tab)},
                               {"count", std::to_string(t.issues.size())}}));
       },
-      [this, tab] { table(tab).loading = false; });
+      [this, tab, version] {
+        if (version == query_version_) table(tab).loading = false;
+      });
 }
 
 void ProjectWindow::load_boards() {
@@ -239,6 +278,245 @@ void ProjectWindow::choose_board_assignee() {
               });
 }
 
+// ------------------------------------------------------ sorting and filtering
+
+void ProjectWindow::apply_query() {
+  ++query_version_;
+  visual_ = false;
+  for (int tab = 0; tab < TabBoard; ++tab) {
+    Table& t = table(static_cast<Tab>(tab));
+    t.loaded = false;
+    t.loading = false;
+    t.selected = 0;
+  }
+  if (tab_ != TabBoard) load_table(static_cast<Tab>(tab_), false);
+}
+
+std::string ProjectWindow::describe_sort() const {
+  return tr("project.sort.current", {{"field", tr(kSortNames[static_cast<int>(query_.sort)])},
+                                     {"direction", tr(query_.descending ? "project.sort.desc" : "project.sort.asc")}});
+}
+
+std::string ProjectWindow::describe_filters() const {
+  std::vector<std::string> parts;
+  if (!query_.statuses.empty())
+    parts.push_back(tr("project.filter.is", {{"field", tr("project.filter.status")}, {"value", join(query_.statuses, ", ")}}));
+  if (!query_.assignees.empty() || query_.unassigned) {
+    std::vector<std::string> names;
+    if (query_.unassigned) names.push_back(tr("project.filter.unassigned"));
+    for (const User& user : query_.assignees) names.push_back(user.display_name);
+    parts.push_back(tr("project.filter.is", {{"field", tr("project.filter.assignee")}, {"value", join(names, ", ")}}));
+  }
+  if (!query_.parents.empty())
+    parts.push_back(tr("project.filter.is", {{"field", tr("project.filter.parent")}, {"value", join(query_.parents, ", ")}}));
+  if (!query_.keys.empty())
+    parts.push_back(tr("project.filter.is", {{"field", tr("project.filter.key")}, {"value", join(query_.keys, ", ")}}));
+  if (!query_.name.empty())
+    parts.push_back(tr("project.filter.contains", {{"field", tr("project.filter.summary")}, {"value", query_.name}}));
+  return join(parts, " · ");
+}
+
+void ProjectWindow::choose_sort() {
+  std::vector<std::string> options;
+  for (int i = 0; i < static_cast<int>(std::size(kSortNames)); ++i) {
+    const bool current = i == static_cast<int>(query_.sort);
+    options.push_back(current ? tr("project.sort.optionCurrent",
+                                   {{"field", tr(kSortNames[i])},
+                                    {"direction", tr(query_.descending ? "project.sort.desc" : "project.sort.asc")}})
+                              : tr(kSortNames[i]));
+  }
+  ctx_.choose(tr("project.sort.title"), options, [this](int pick) {
+    const auto field = static_cast<SortField>(pick);
+    // The same field again reverses it. A new field starts the way it is most
+    // often read: newest first for dates, A to Z for everything else.
+    if (field == query_.sort)
+      query_.descending = !query_.descending;
+    else
+      query_.descending = field == SortField::Updated;
+    query_.sort = field;
+    apply_query();
+  });
+}
+
+void ProjectWindow::choose_filter() {
+  const std::string any = tr("project.filter.any");
+  std::vector<std::string> statuses = query_.statuses, names, parents = query_.parents, keys = query_.keys;
+  if (query_.unassigned) names.push_back(tr("project.filter.unassigned"));
+  for (const User& user : query_.assignees) names.push_back(user.display_name);
+  auto option = [&](const char* field, const std::string& value) {
+    return tr("project.filter.option", {{"field", tr(field)}, {"value", value.empty() ? any : value}});
+  };
+  std::vector<std::string> options{
+      option("project.filter.status", join(statuses, ", ")),
+      option("project.filter.assignee", join(names, ", ")),
+      option("project.filter.parent", join(parents, ", ")),
+      option("project.filter.key", join(keys, ", ")),
+      option("project.filter.summary", query_.name),
+  };
+  if (query_.filtered()) options.push_back(tr("project.filter.clear"));
+
+  ctx_.choose(tr("project.filter.title"), options, [this](int pick) {
+    switch (pick) {
+      case 0: return filter_statuses();
+      case 1: return filter_assignees();
+      case 2: return filter_parents();
+      case 3: return filter_keys();
+      case 4: return filter_name();
+      default: {
+        ListQuery cleared;
+        cleared.sort = query_.sort;
+        cleared.descending = query_.descending;
+        query_ = std::move(cleared);
+        return apply_query();
+      }
+    }
+  });
+}
+
+void ProjectWindow::filter_statuses() {
+  ctx_.set_status(tr("project.filter.loadingStatuses"));
+  ui::async(
+      ctx_, life, tr("project.action.loadStatuses", {{"project", project_.key}}),
+      [this] { return ctx_.jira().project_statuses(project_.key); },
+      [this](std::vector<std::string> statuses) {
+        if (statuses.empty()) return ctx_.set_status(tr("project.filter.noChoices"), true);
+        std::vector<bool> checked;
+        for (const std::string& s : statuses)
+          checked.push_back(std::find(query_.statuses.begin(), query_.statuses.end(), s) != query_.statuses.end());
+        ctx_.set_status("");
+        ctx_.check_list(tr("project.filter.pick", {{"field", tr("project.filter.status")}}), statuses, checked,
+                        [this, statuses](const std::vector<bool>& picked) {
+                          query_.statuses.clear();
+                          for (size_t i = 0; i < statuses.size() && i < picked.size(); ++i)
+                            if (picked[i]) query_.statuses.push_back(statuses[i]);
+                          apply_query();
+                        });
+      });
+}
+
+void ProjectWindow::filter_assignees() {
+  ctx_.set_status(tr("project.filter.loadingUsers"));
+  ui::async(
+      ctx_, life, tr("project.action.loadUsers", {{"project", project_.key}}),
+      [this] { return ctx_.jira().project_assignable_users(project_.key); },
+      [this](std::vector<User> users) {
+        // Unassigned is a state, not a person, so it leads the list.
+        std::vector<std::string> options{tr("project.filter.unassigned")};
+        std::vector<bool> checked{query_.unassigned};
+        for (const User& user : users) {
+          options.push_back(user.display_name);
+          checked.push_back(std::any_of(query_.assignees.begin(), query_.assignees.end(),
+                                        [&](const User& u) { return u.account_id == user.account_id; }));
+        }
+        ctx_.set_status("");
+        ctx_.check_list(tr("project.filter.pick", {{"field", tr("project.filter.assignee")}}), options, checked,
+                        [this, users](const std::vector<bool>& picked) {
+                          query_.unassigned = !picked.empty() && picked[0];
+                          query_.assignees.clear();
+                          for (size_t i = 0; i < users.size() && i + 1 < picked.size(); ++i)
+                            if (picked[i + 1]) query_.assignees.push_back(users[i]);
+                          apply_query();
+                        });
+      });
+}
+
+void ProjectWindow::filter_parents() {
+  // The parents of the tickets already loaded on any list tab, rather than every
+  // ticket in the project: most tickets are nobody's parent. Parents already
+  // ticked stay listed, or filtering by one would hide the rest for good.
+  std::vector<std::string> keys = query_.parents;
+  for (int tab = 0; tab < TabBoard; ++tab)
+    for (const Issue& issue : table(static_cast<Tab>(tab)).issues)
+      if (!issue.parent.empty() && std::find(keys.begin(), keys.end(), issue.parent) == keys.end())
+        keys.push_back(issue.parent);
+  if (keys.empty()) return ctx_.set_status(tr("project.filter.noParents"), true);
+
+  // Only for the names. A parent that was deleted or moved makes Jira refuse
+  // the whole `key in` query, and the keys alone are still a usable list, so a
+  // failure here is not worth an error popup.
+  constexpr size_t kMaxNamed = 100;
+  std::vector<std::string> named(keys.begin(), keys.begin() + static_cast<long>(std::min(keys.size(), kMaxNamed)));
+  ctx_.set_status(tr("project.filter.loadingParents"));
+  ui::async(
+      ctx_, life, tr("project.action.loadParents", {{"project", project_.key}}),
+      [this, named] {
+        try {
+          return ctx_.jira().search("key in " + jql_list(named), static_cast<int>(named.size())).issues;
+        } catch (const JiraError&) {
+          return std::vector<Issue>{};
+        }
+      },
+      [this, keys](std::vector<Issue> parents) {
+        std::vector<std::string> options;
+        std::vector<bool> checked;
+        for (const std::string& key : keys) {
+          const auto found = std::find_if(parents.begin(), parents.end(), [&](const Issue& p) { return p.key == key; });
+          options.push_back(found == parents.end()
+                                ? key
+                                : tr("project.filter.parentOption", {{"key", key}, {"summary", found->summary}}));
+          checked.push_back(std::find(query_.parents.begin(), query_.parents.end(), key) != query_.parents.end());
+        }
+        ctx_.set_status("");
+        ctx_.check_list(tr("project.filter.pick", {{"field", tr("project.filter.parent")}}), options, checked,
+                        [this, keys](const std::vector<bool>& picked) {
+                          query_.parents.clear();
+                          for (size_t i = 0; i < keys.size() && i < picked.size(); ++i)
+                            if (picked[i]) query_.parents.push_back(keys[i]);
+                          apply_query();
+                        });
+      });
+}
+
+void ProjectWindow::filter_keys() {
+  ctx_.prompt(tr("project.filter.askKeys", {{"project", project_.key}}), join(query_.keys, ", "),
+              [this](const std::string& typed) {
+                // "12" is short for this project's ENG-12. Anything that is not a
+                // key is refused here, where it can be named, rather than by Jira
+                // as a JQL syntax error.
+                std::vector<std::string> keys;
+                std::string token;
+                auto take = [&]() -> bool {
+                  if (token.empty()) return true;
+                  std::string key = token;
+                  token.clear();
+                  for (char& c : key) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                  if (std::all_of(key.begin(), key.end(), [](unsigned char c) { return std::isdigit(c); }))
+                    key = project_.key + "-" + key;
+                  const auto dash = key.rfind('-');
+                  const bool valid =
+                      dash != std::string::npos && dash > 0 && dash + 1 < key.size() &&
+                      std::isalpha(static_cast<unsigned char>(key[0])) &&
+                      std::all_of(key.begin() + static_cast<long>(dash) + 1, key.end(),
+                                  [](unsigned char c) { return std::isdigit(c); }) &&
+                      std::all_of(key.begin(), key.begin() + static_cast<long>(dash),
+                                  [](unsigned char c) { return std::isalnum(c) || c == '_'; });
+                  if (!valid) {
+                    ctx_.set_status(tr("project.filter.badKey", {{"key", key}}), true);
+                    return false;
+                  }
+                  if (std::find(keys.begin(), keys.end(), key) == keys.end()) keys.push_back(key);
+                  return true;
+                };
+                for (char c : typed) {
+                  if (c == ',' || std::isspace(static_cast<unsigned char>(c))) {
+                    if (!take()) return;
+                  } else {
+                    token += c;
+                  }
+                }
+                if (!take()) return;
+                query_.keys = std::move(keys);
+                apply_query();
+              });
+}
+
+void ProjectWindow::filter_name() {
+  ctx_.prompt(tr("project.filter.askName"), query_.name, [this](const std::string& typed) {
+    query_.name = typed;
+    apply_query();
+  });
+}
+
 void ProjectWindow::reload(bool announce) {
   if (tab_ == TabBoard)
     load_board_issues(announce);
@@ -248,6 +526,7 @@ void ProjectWindow::reload(bool announce) {
 
 void ProjectWindow::select_tab(int tab) {
   tab_ = tab;
+  visual_ = false;
   filter_.clear();
   on_focus();
 }
@@ -323,6 +602,20 @@ const Issue* ProjectWindow::current_issue() const {
   return rows[static_cast<size_t>(index)];
 }
 
+bool ProjectWindow::in_visual_range(int row) const {
+  if (!visual_ || tab_ == TabBoard) return false;
+  const int cursor = table(static_cast<Tab>(tab_)).selected;
+  return row >= std::min(visual_anchor_, cursor) && row <= std::max(visual_anchor_, cursor);
+}
+
+std::vector<const Issue*> ProjectWindow::visual_rows() const {
+  std::vector<const Issue*> out;
+  const auto rows = visible_rows();
+  for (int i = 0; i < static_cast<int>(rows.size()); ++i)
+    if (in_visual_range(i)) out.push_back(rows[static_cast<size_t>(i)]);
+  return out;
+}
+
 void ProjectWindow::open_current() {
   if (const Issue* issue = current_issue())
     ctx_.push_window(std::make_unique<TicketWindow>(ctx_, project_, *issue));
@@ -354,11 +647,14 @@ Element ProjectWindow::render_table() {
         text(" "),
         text(ui::relative_time(issue.updated)) | dim | size(WIDTH, EQUAL, 10),
     });
+    if (in_visual_range(i)) line = line | bgcolor(Color::Blue);
     if (i == t.selected) line = line | inverted | focus;
     lines.push_back(line);
   }
   if (lines.empty())
-    lines.push_back(ui::empty_hint(t.loading ? tr("common.loading") : tr("project.table.empty")));
+    lines.push_back(ui::empty_hint(t.loading            ? tr("common.loading")
+                                   : query_.filtered() ? tr("project.filter.noMatch")
+                                                       : tr("project.table.empty")));
   else if (!t.is_last)
     lines.push_back(ui::empty_hint(tr("project.table.more")));
 
@@ -377,7 +673,18 @@ Element ProjectWindow::render_table() {
                 }) |
                 bold | dim;
 
-  return vbox({header, separator(), vbox(std::move(lines)) | vscroll_indicator | yframe | flex});
+  // The keys are named here as on the board, since the footer cannot hold them
+  // all, and a list that is quietly filtered looks like a list missing tickets.
+  const std::string filters = describe_filters();
+  auto query_line = hbox({
+      text(" " + tr("project.sort.hint", {{"sort", describe_sort()}})) |
+          (query_.sort == SortField::Updated && query_.descending ? dim : color(Color::Yellow)),
+      text("   "),
+      text(filters.empty() ? tr("project.filter.hint") : tr("project.filter.active", {{"filters", filters}})) |
+          (filters.empty() ? dim : color(Color::Yellow)),
+  });
+
+  return vbox({query_line, header, separator(), vbox(std::move(lines)) | vscroll_indicator | yframe | flex});
 }
 
 Element ProjectWindow::render_card(const Issue& issue, bool selected) const {
@@ -488,6 +795,9 @@ Element ProjectWindow::render() {
   };
   if (filter_.active || !filter_.query.empty())
     body.push_back(hbox({text(" /"), text(filter_.query) | bold}) | color(Color::Yellow));
+  if (visual_ && tab_ != TabBoard)
+    body.push_back(text(" " + tr("project.visual.bar", {{"count", std::to_string(visual_rows().size())}})) |
+                   bold | color(Color::Blue));
 
   return ui::panel(tr("project.title", {{"key", project_.key}, {"name", project_.name}}),
                    vbox(std::move(body)), true);
@@ -506,6 +816,20 @@ bool ProjectWindow::on_table_event(const Event& event) {
   }
   if (event == Event::Character('m')) {
     load_table(static_cast<Tab>(tab_), true);
+    return true;
+  }
+  if (event == Event::Character('t')) {
+    choose_sort();
+    return true;
+  }
+  if (event == Event::Character('f')) {
+    choose_filter();
+    return true;
+  }
+  if (event == Event::Character('v')) {
+    visual_ = !visual_;
+    visual_anchor_ = t.selected;
+    ctx_.set_status(tr(visual_ ? "project.visual.on" : "project.visual.off"));
     return true;
   }
   return false;
@@ -551,6 +875,13 @@ bool ProjectWindow::on_board_event(const Event& event) {
 bool ProjectWindow::on_event(const Event& event) {
   if (filter_.on_event(event)) {
     table(static_cast<Tab>(tab_)).selected = 0;
+    visual_ = false;
+    return true;
+  }
+  // Before the window's own back key: Esc or q leaves the selection first.
+  if (visual_ && ui::is_back(event)) {
+    visual_ = false;
+    ctx_.set_status(tr("project.visual.off"));
     return true;
   }
 
@@ -571,6 +902,22 @@ bool ProjectWindow::on_event(const Event& event) {
   }
   if (event == Event::Character('n')) {
     actions::create_issue(ctx_, life, project_.key, [this](const std::string&) { reload(false); });
+    return true;
+  }
+
+  // The new order puts the changed tickets elsewhere, so the selection ends
+  // with the refresh; a cancelled dialog leaves it in place.
+  if (visual_ && tab_ != TabBoard && (event == Event::Character('s') || event == Event::Character('a'))) {
+    std::vector<std::string> keys;
+    for (const Issue* row : visual_rows()) keys.push_back(row->key);
+    auto done = ui::guarded(life, [this] {
+      visual_ = false;
+      reload(false);
+    });
+    if (event == Event::Character('s'))
+      actions::change_status_all(ctx_, life, std::move(keys), done);
+    else
+      actions::reassign_all(ctx_, life, std::move(keys), done);
     return true;
   }
 
@@ -600,7 +947,10 @@ std::vector<ui::KeyHelp> ProjectWindow::keys() const {
   } else {
     out.push_back({"j / k", tr("project.keys.move")});
     out.push_back({"g / G, d / u", tr("project.keys.jump")});
+    out.push_back({"t", tr("project.keys.sort")});
+    out.push_back({"f", tr("project.keys.filterBy")});
     out.push_back({"m", tr("project.keys.more")});
+    out.push_back({"v", tr("project.keys.visual")});
   }
   out.insert(out.end(), {
                             {"Enter / Space", tr("project.keys.open")},

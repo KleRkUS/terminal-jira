@@ -54,6 +54,14 @@ class Context {
                           std::function<void(const std::vector<bool>&)> on_done) = 0;
   virtual void confirm(std::string question, std::function<void()> on_yes) = 0;
 
+  // Takes the keyboard away and shows `message` over the screen until
+  // unblock(). For a change sent ticket by ticket: moving the selection or
+  // leaving the window halfway through would leave the user unsure what was
+  // changed. Calling it again while blocked only replaces the message. Ctrl-C
+  // still quits.
+  virtual void block(std::string message) = 0;
+  virtual void unblock() = 0;
+
   // Suspends the TUI, runs $EDITOR on `initial`, and returns the edited text.
   // Returns false if the editor failed or the text came back unchanged.
   virtual bool edit_externally(const std::string& initial, std::string& out) = 0;

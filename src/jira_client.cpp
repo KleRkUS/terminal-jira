@@ -3,6 +3,7 @@
 
 #include "jira_client.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
@@ -344,6 +345,27 @@ void JiraClient::update_labels(const std::string& issue_key, const std::vector<s
 std::vector<User> JiraClient::assignable_users(const std::string& issue_key) {
   std::vector<User> out;
   auto j = request("GET", "/rest/api/3/user/assignable/search?maxResults=100&issueKey=" + escape(issue_key));
+  if (!j.is_array()) return out;
+  for (const auto& u : j) out.push_back({str_or(u, "accountId"), str_or(u, "displayName")});
+  return out;
+}
+
+std::vector<std::string> JiraClient::project_statuses(const std::string& project_key) {
+  // Grouped by issue type, so the same status turns up once per type using it.
+  std::vector<std::string> out;
+  auto j = request("GET", "/rest/api/3/project/" + escape(project_key) + "/statuses");
+  if (!j.is_array()) return out;
+  for (const auto& type : j)
+    for (const auto& s : type.value("statuses", json::array())) {
+      const std::string name = str_or(s, "name");
+      if (!name.empty() && std::find(out.begin(), out.end(), name) == out.end()) out.push_back(name);
+    }
+  return out;
+}
+
+std::vector<User> JiraClient::project_assignable_users(const std::string& project_key) {
+  std::vector<User> out;
+  auto j = request("GET", "/rest/api/3/user/assignable/search?maxResults=100&project=" + escape(project_key));
   if (!j.is_array()) return out;
   for (const auto& u : j) out.push_back({str_or(u, "accountId"), str_or(u, "displayName")});
   return out;

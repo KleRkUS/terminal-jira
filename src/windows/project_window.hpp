@@ -32,6 +32,28 @@ class ProjectWindow : public ui::Window {
     bool loaded = false;
     bool loading = false;
     int selected = 0;
+    int query_version = 0;  // the query_version_ these rows were asked for with
+  };
+
+  // How the ticket lists are sorted and filtered. Both go into the JQL rather
+  // than being applied to the rows on screen: a list arrives a page at a time,
+  // and sorting only the loaded page would put the wrong tickets first. Shared
+  // by the three list tabs.
+  enum class SortField { Key, Summary, Status, Assignee, Parent, Updated };
+  struct ListQuery {
+    SortField sort = SortField::Updated;
+    bool descending = true;
+    std::vector<std::string> statuses;
+    std::vector<User> assignees;
+    bool unassigned = false;
+    std::vector<std::string> parents;  // keys
+    std::vector<std::string> keys;
+    std::string name;  // summary ~ name
+
+    bool filtered() const {
+      return !statuses.empty() || !assignees.empty() || unassigned || !parents.empty() || !keys.empty() ||
+             !name.empty();
+    }
   };
 
   // Columns of the board view, each holding the issues currently in it.
@@ -62,6 +84,19 @@ class ProjectWindow : public ui::Window {
   void choose_columns();
   void choose_board_assignee();
 
+  void choose_sort();
+  void choose_filter();
+  void filter_statuses();
+  void filter_assignees();
+  void filter_parents();
+  void filter_keys();
+  void filter_name();
+  // Reloads the lists under the new query; rows from the old one are dropped
+  // even if they arrive later.
+  void apply_query();
+  std::string describe_sort() const;
+  std::string describe_filters() const;
+
   std::string jql_for(Tab tab) const;
   Table& table(Tab tab) { return tables_[static_cast<size_t>(tab)]; }
   const Table& table(Tab tab) const { return tables_[static_cast<size_t>(tab)]; }
@@ -70,6 +105,9 @@ class ProjectWindow : public ui::Window {
   std::vector<Column> shown_columns() const;
   const Issue* current_issue() const;
   void open_current();
+  // The run of rows between the visual anchor and the cursor, in list order.
+  std::vector<const Issue*> visual_rows() const;
+  bool in_visual_range(int row) const;
 
   ftxui::Element render_table();
   ftxui::Element render_board();
@@ -83,6 +121,12 @@ class ProjectWindow : public ui::Window {
   int tab_ = TabMine;
   ui::Filter filter_;
   Table tables_[TabCount];
+  // Visual mode, on the ticket lists only. The selection is by row index, so
+  // anything that reorders or refilters the rows ends it.
+  bool visual_ = false;
+  int visual_anchor_ = 0;
+  ListQuery query_;
+  int query_version_ = 0;
 
   std::vector<Board> boards_;
   std::vector<BoardColumn> config_;

@@ -69,6 +69,11 @@ class JiraClient {
   void update_labels(const std::string& issue_key, const std::vector<std::string>& labels);
 
   std::vector<User> assignable_users(const std::string& issue_key);
+
+  // The choices behind the list filters. Statuses are every one any issue type
+  // in the project can be in, by name, once each.
+  std::vector<std::string> project_statuses(const std::string& project_key);
+  std::vector<User> project_assignable_users(const std::string& project_key);
   void assign(const std::string& issue_key, const std::string& account_id);  // empty => unassign
 
   std::vector<Transition> transitions(const std::string& issue_key);

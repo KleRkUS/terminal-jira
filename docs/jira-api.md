@@ -26,6 +26,8 @@ the official reference rather than guessing a field name:
 | Assign | `PUT /rest/api/3/issue/{key}/assignee` |
 | Transitions | `GET`/`POST /rest/api/3/issue/{key}/transitions` |
 | Assignable users | `GET /rest/api/3/user/assignable/search?issueKey=…` |
+| Statuses of a project (list filter) | `GET /rest/api/3/project/{key}/statuses` |
+| Assignable users of a project (list filter) | `GET /rest/api/3/user/assignable/search?project=…` |
 
 ## Traps
 
@@ -79,6 +81,25 @@ allow.
 endpoint, which already accounts for the workflow and the user's permissions.
 Assignees come from `user/assignable/search`, not a list of all users. Never
 hard-code a status name or a workflow step.
+
+**Sort and filter in the JQL, not on screen.** The lists arrive 50 at a time,
+so sorting the loaded page would put the wrong tickets first. The list query
+becomes `status in (…)`, `assignee in (accountIds…) OR assignee is EMPTY`,
+`parent in (…)`, `key in (…)` and `summary ~ "…"`, then one `ORDER BY`. Only one
+sort field: Jira has ignored the direction of fields that follow `parent` in an
+`ORDER BY`. `parent` supports `IN` but not `IS EMPTY`, so there is no "no
+parent" filter. The parent choices are the `parent` keys of the loaded rows; one
+`key in (…)` search adds their names, and since Jira rejects that whole query if
+any one key no longer exists, a failure falls back to bare keys without a popup. `/project/{key}/statuses` is grouped by issue type and repeats a
+status for every type using it; the client keeps one of each name.
+
+**There is no portable bulk edit.** Cloud has `/rest/api/3/bulk/issues/...`, but
+it is asynchronous, needs the bulk-change global permission, and Server and
+Data Center do not have it. Changing several tickets is therefore one
+transitions or assignable-users read per ticket, then one write per ticket, sent
+in turn on the worker thread while the UI is blocked (`ui::Context::block`).
+Tickets can sit on different workflows, so the choices offered are the ones all
+of them share, and each ticket moves by its own transition id.
 
 **Report failures verbatim.** `request()` throws `JiraError` carrying the status
 code and the unmodified response body (status `0` and the transport error when the
