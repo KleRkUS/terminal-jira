@@ -38,7 +38,7 @@ message(STATUS "terminal-jira platform: ${TERMINAL_JIRA_PLATFORM}")
 # The one place the version lives. A release PR bumps it, and the release
 # workflow reads it back from this exact line — keep it on one line, in this
 # form: X.Y.Z, or X.Y.Z-suffix for a pre-release.
-set(TERMINAL_JIRA_VERSION "0.1.0")
+set(TERMINAL_JIRA_VERSION "0.2.0")
 message(STATUS "terminal-jira version: ${TERMINAL_JIRA_VERSION}")
 
 include(FetchContent)
