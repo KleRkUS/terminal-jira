@@ -165,6 +165,25 @@ check "the first is assigned"  'PUT /rest/api/3/issue/ENG-1/assignee {"accountId
 check "and so is the second"   'PUT /rest/api/3/issue/ENG-2/assignee {"accountId":"a1"}' "$work/writes.log"
 check "the status bar says so" "2 tickets assigned to Ada Lovelace" "$work/visual-assign.txt"
 
+# Esc used to throw the query away. Now it only ends typing: the matches stay,
+# j and k move between them instead of being typed, and / starts over.
+echo "search: Esc keeps the matches, / starts again"
+: > "$work/writes.log"
+"$here/drive.sh" "$binary" "$work/esc.raw" \
+  2:'\r' 2:s 1.5:/ 0.5:o 0.5:'\x1b' 1:j 0.5:' ' 2:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/esc.raw" 99 > "$work/esc.txt"
+check "the query stays after Esc"           '/o'                                 "$work/esc.txt"
+check "and says how to search again"        '/ searches again'                   "$work/esc.txt"
+check "j moved to the second match"         '/transitions {"transition":{"id":"21"}}' "$work/writes.log"
+refute "rather than being typed"            '/oj'                                "$work/esc.txt"
+
+"$here/drive.sh" "$binary" "$work/esc-list.raw" \
+  2:/ 0.5:ops 0.5:'\x1b' 1:j 1:/ 1:'\x03' > /dev/null
+python3 "$here/replay.py" "$work/esc-list.raw" 99 > "$work/esc-list.txt"
+python3 "$here/replay.py" "$work/esc-list.raw" 1 > "$work/esc-list-last.txt"
+check  "the project list keeps its matches"  'Projects (1/2)'                     "$work/esc-list.txt"
+check  "until / starts a new search"         'Projects (2/2)'                     "$work/esc-list-last.txt"
+
 # Sorting and filtering go into the JQL, so a list loaded a page at a time is
 # still in the right order; the search log is what proves it.
 echo "lists: t sorts and f filters, both through the JQL"

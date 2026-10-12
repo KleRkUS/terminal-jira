@@ -71,7 +71,7 @@ Element ProjectsWindow::render() {
                 bold | dim;
 
   Elements body{header, separator(), vbox(std::move(rows)) | vscroll_indicator | yframe | flex};
-  if (filter_.active) body.push_back(hbox({text(" /"), text(filter_.query) | bold}) | color(Color::Yellow));
+  if (filter_.visible()) body.push_back(ui::filter_line(filter_));
 
   const std::string title =
       projects_.empty() ? tr("projects.title")

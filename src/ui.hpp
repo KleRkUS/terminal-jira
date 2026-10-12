@@ -162,7 +162,13 @@ struct Filter {
   }
   // Consumes typing keys while active. Returns true if the event was used.
   bool on_event(const ftxui::Event& event);
+  // Something to draw: being typed, or kept after Esc.
+  bool visible() const { return active || !query.empty(); }
 };
+
+// The query line under a filtered list. Typing and a kept query look different,
+// since only one of them takes j and k as letters.
+ftxui::Element filter_line(const Filter& filter);
 
 bool matches(const std::string& haystack, const std::string& query);
 
