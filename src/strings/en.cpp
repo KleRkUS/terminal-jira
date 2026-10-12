@@ -44,6 +44,11 @@ const char kStringsEn[] = R"json(
 
     "prompt": { "footer": "Enter to save · Esc to cancel" },
 
+    "filter": {
+      "typing": "Esc keeps these matches",
+      "kept": "/ searches again"
+    },
+
     "picker": {
       "noMatch": "nothing matches",
       "footer": "Enter or Space to choose · / to filter · q or Esc to cancel"

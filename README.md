@@ -179,7 +179,10 @@ the current list. Arrow keys and page keys work too.
 
 While you are typing — in a `/` filter or a text prompt — `q` and `Space` are just
 characters, so you can search for `queue` or write a summary with spaces in it.
-`Esc` leaves the filter or cancels the prompt.
+`Esc` cancels a prompt. In a `/` filter it stops typing but keeps the matches on
+screen, so `j`/`k` move between them and `Enter` or `Space` picks one; the next
+`Esc` closes the popup or leaves the window as usual. Pressing `/` again starts
+a new search. This works the same in every list and popup.
 
 ### Picking a project
 

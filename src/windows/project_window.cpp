@@ -793,8 +793,7 @@ Element ProjectWindow::render() {
       separator(),
       (tab_ == TabBoard ? render_board() : render_table()) | flex,
   };
-  if (filter_.active || !filter_.query.empty())
-    body.push_back(hbox({text(" /"), text(filter_.query) | bold}) | color(Color::Yellow));
+  if (filter_.visible()) body.push_back(ui::filter_line(filter_));
   if (visual_ && tab_ != TabBoard)
     body.push_back(text(" " + tr("project.visual.bar", {{"count", std::to_string(visual_rows().size())}})) |
                    bold | color(Color::Blue));

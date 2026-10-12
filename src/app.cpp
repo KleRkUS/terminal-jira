@@ -410,8 +410,7 @@ Element App::render_modal() {
 
       Elements content{vbox(std::move(rows)) | vscroll_indicator | yframe |
                        size(HEIGHT, LESS_THAN, 18)};
-      if (picker_filter_.active || !picker_filter_.query.empty())
-        content.push_back(hbox({text(" /"), text(picker_filter_.query) | bold}) | color(Color::Yellow));
+      if (picker_filter_.visible()) content.push_back(ui::filter_line(picker_filter_));
       content.push_back(separator());
       content.push_back(text(tr(boxes ? "app.checklist.footer" : "app.picker.footer")) | dim);
 

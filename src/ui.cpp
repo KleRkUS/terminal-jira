@@ -93,8 +93,10 @@ bool Filter::on_event(const Event& event) {
     }
     return false;
   }
+  // Esc ends typing but keeps the query, so the matches stay on screen and j / k
+  // move between them again; `/` starts a fresh query.
   if (event == Event::Escape) {
-    clear();
+    active = false;
     return true;
   }
   if (event == Event::Backspace) {
@@ -108,6 +110,15 @@ bool Filter::on_event(const Event& event) {
     return true;
   }
   return false;
+}
+
+Element filter_line(const Filter& filter) {
+  if (filter.active)
+    return hbox({text(" /"), text(filter.query) | bold, text("▏"), filler(),
+                 text(translations::tr("app.filter.typing") + " ") | dim}) |
+           color(Color::Yellow);
+  return hbox({text(" /"), text(filter.query) | bold, filler(), text(translations::tr("app.filter.kept") + " ") | dim}) |
+         color(Color::Yellow);
 }
 
 bool matches(const std::string& haystack, const std::string& query) {
